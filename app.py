@@ -18,7 +18,7 @@ except ImportError:
     tavily_available = False
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'conect_ai_super_secret_key'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'conect_ai_super_secret_key')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
 db = SQLAlchemy(app)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', max_http_buffer_size=100 * 1024 * 1024)
@@ -27,6 +27,8 @@ login_manager = LoginManager(app)
 login_manager.login_view = 'login'
 
 def start_ollama_automatically():
+    if os.environ.get('RENDER'):
+        return
     try:
         subprocess.Popen(
             ["ollama", "run", "qwen2.5:1.5b"],
@@ -38,10 +40,18 @@ def start_ollama_automatically():
     except Exception as e:
         print(f"⚠️ Ollamaの自動起動に失敗しました: {e}")
 
-client = openai.OpenAI(
-    base_url="http://localhost:11434/v1",
-    api_key="ollama"
-)
+# 環境変数からOpenAI APIキーを取得（セキュリティ保護対応）
+openai_api_key = os.environ.get('OPENAI_API_KEY')
+
+if openai_api_key:
+    client = openai.OpenAI(api_key=openai_api_key)
+    AI_MODEL = "gpt-4o-mini"
+else:
+    client = openai.OpenAI(
+        base_url="http://localhost:11434/v1",
+        api_key="ollama"
+    )
+    AI_MODEL = "qwen2.5:1.5b"
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -174,7 +184,7 @@ def async_ai_task(prompt, app_instance):
             full_prompt = f"質問: {prompt}\n\n参考情報:\n{search_context if search_context else 'なし'}\n\n指示: 上記の質問に対し、関係のない情報を混ぜず、簡潔かつ正確に日本語で答えてください。"
 
             response = client.chat.completions.create(
-                model="qwen2.5:1.5b", 
+                model=AI_MODEL, 
                 messages=[
                     {"role": "system", "content": "あなたは正確で簡潔なAIアシスタントです。質問に対して嘘をつかず、関係のない話題に脱線しないで答えてください。"},
                     {"role": "user", "content": full_prompt}
