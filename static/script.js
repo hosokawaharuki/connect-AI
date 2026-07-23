@@ -1,423 +1,730 @@
 'use strict';
 
-const socket = io();
-
-const username = document.getElementById('input-username').value;
-let roomId = document.getElementById('input-room-id').value.trim();
-
-// 無限キャンパス・滑らかな拡大縮小管理
-let scale = 1.0;
-let panX = 0;
-let panY = 0;
-let isPanning = false;
-let startX = 0;
-let startY = 0;
-
-let isDrawing = false;
-let lastX = 0;
-let lastY = 0;
-let currentTool = 'pen';
-let penType = 'digital';
-let penColor = '#000000';
-let penSize = 8.0;
-let penOpacity = 1.0;
-let bgColor = '#ffffff';
-let aiStrokeCorrection = true;
-let aiNoiseCut = true;
-
-// レイヤー管理
-let layers = [];
-let activeLayerId = null;
-let layerCounter = 0;
-
-let localStream = null;
-let remoteStream = null;
-
-const joinModal = document.getElementById('join-modal');
-const appContainer = document.getElementById('app-container');
-const btnJoin = document.getElementById('btn-join');
-const inputRoomId = document.getElementById('input-room-id');
-const roomIdDisplay = document.getElementById('room-id-display');
-const btnCopyUrl = document.getElementById('btn-copy-url');
-
-const canvasContainer = document.getElementById('canvas-container');
-const layersStack = document.getElementById('layers-stack');
-const layerBg = document.getElementById('layer-bg');
-const bgCtx = layerBg.getContext('2d', { alpha: false }); // 軽量化
-
-const btnPen = document.getElementById('btn-pen');
-const btnEraser = document.getElementById('btn-eraser');
-const colorPicker = document.getElementById('color-picker');
-const bgColorPicker = document.getElementById('bg-color-picker');
-const btnSizePlus = document.getElementById('btn-size-plus');
-const btnSizeMinus = document.getElementById('btn-size-minus');
-const sizeDisplay = document.getElementById('size-display');
-const btnOpacityPlus = document.getElementById('btn-opacity-plus');
-const btnOpacityMinus = document.getElementById('btn-opacity-minus');
-const opacityDisplay = document.getElementById('opacity-display');
-
-const btnZoomIn = document.getElementById('btn-zoom-in');
-const btnZoomOut = document.getElementById('btn-zoom-out');
-const zoomDisplay = document.getElementById('zoom-display');
-const btnResetView = document.getElementById('btn-reset-view');
-
-const aiStrokeToggle = document.getElementById('ai-stroke-toggle');
-const btnToggleNoise = document.getElementById('btn-toggle-noise');
-
-const chatPanel = document.getElementById('chat-panel');
-const layerPanel = document.getElementById('layer-panel');
-const btnToggleChat = document.getElementById('btn-toggle-chat');
-const btnTogglePanel = document.getElementById('btn-toggle-panel');
-const btnAiConsult = document.getElementById('btn-ai-consult');
-const chatMessages = document.getElementById('chat-messages');
-const inputChat = document.getElementById('input-chat');
-const btnSendChat = document.getElementById('btn-send-chat');
-
-window.addEventListener('load', () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const urlRoom = urlParams.get('room');
-    if (urlRoom) {
-        inputRoomId.value = urlRoom;
-    }
+const socket = io({
+    transports: ['polling', 'websocket'],
+    reconnectionAttempts: 5,
+    reconnectionDelay: 1000
 });
 
-btnJoin.addEventListener('click', () => {
-    roomId = inputRoomId.value.trim();
+let currentUsername = '';
+
+document.getElementById('btn-join').onclick = () => {
+    currentUsername = document.getElementById('input-username').value;
+    let roomId = document.getElementById('input-room-id').value.trim();
     if (!roomId) {
-        roomId = Math.floor(1000 + Math.random() * 9000).toString();
+        roomId = 'room_' + Math.random().toString(36).substring(2, 9);
     }
-    roomIdDisplay.textContent = `ルームID: ${roomId}`;
-    joinModal.style.display = 'none';
-    appContainer.style.display = 'block';
+    document.getElementById('join-modal').style.display = 'none';
+    document.getElementById('app-container').style.display = 'flex';
+    document.getElementById('room-id-display').innerText = 'ルームID: ' + roomId;
+    
+    socket.emit('join', { room: roomId, username: currentUsername });
+    initWhiteboard();
+    initWebRTC();
+    initChat();
+    initLayoutAndDrag();
+};
 
-    initCanvasSystem();
-    initMediaStream();
-    socket.emit('join', { room: roomId });
-});
-
-btnCopyUrl.addEventListener('click', () => {
-    const shareUrl = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
-    navigator.clipboard.writeText(shareUrl).then(() => {
-        alert('招待URLをコピーしました！');
-    });
-});
-
-// 無限キャンパス・滑らかな拡大縮小システム
-function initCanvasSystem() {
-    resizeCanvasBackground();
-    window.addEventListener('resize', resizeCanvasBackground);
-
-    addNewLayer('背景レイヤー', true);
-    addNewLayer('メインレイヤー', false);
-
+function initWhiteboard() {
+    const bgCanvas = document.getElementById('layer-bg');
+    const layersStack = document.getElementById('layers-stack');
+    const canvasContainer = document.getElementById('canvas-container');
     const workspace = document.getElementById('workspace');
+    
+    // 軽量化とパフォーマンス向上のため適度なボードサイズに設定
+    const boardWidth = 6000;
+    const boardHeight = 6000;
+    
+    bgCanvas.width = boardWidth;
+    bgCanvas.height = boardHeight;
+    const bgCtx = bgCanvas.getContext('2d', { alpha: false });
+    bgCtx.fillStyle = '#ffffff';
+    bgCtx.fillRect(0, 0, boardWidth, boardHeight);
 
-    // スムーズホイールズーム
+    const localDraftCanvas = document.createElement('canvas');
+    localDraftCanvas.className = 'layer-canvas';
+    localDraftCanvas.width = boardWidth;
+    localDraftCanvas.height = boardHeight;
+    localDraftCanvas.style.zIndex = '100';
+    localDraftCanvas.style.pointerEvents = 'none';
+    layersStack.appendChild(localDraftCanvas);
+    const localDraftCtx = localDraftCanvas.getContext('2d');
+
+    const remoteDrafts = {};
+    function getRemoteDraft(user) {
+        if (!remoteDrafts[user]) {
+            const canvas = document.createElement('canvas');
+            canvas.className = 'layer-canvas';
+            canvas.width = boardWidth;
+            canvas.height = boardHeight;
+            canvas.style.zIndex = '99';
+            canvas.style.pointerEvents = 'none';
+            layersStack.appendChild(canvas);
+            remoteDrafts[user] = { canvas, ctx: canvas.getContext('2d') };
+        }
+        return remoteDrafts[user];
+    }
+
+    let layers = [];
+    let activeLayerId = null;
+    let undoStack = [];
+    let redoStack = [];
+
+    let scale = 1.0;
+    let panX = 0;
+    let panY = 0;
+
+    function updateTransform() {
+        requestAnimationFrame(() => {
+            canvasContainer.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+            canvasContainer.style.transformOrigin = '0 0';
+            document.getElementById('zoom-display').innerText = Math.round(scale * 100) + '%';
+        });
+    }
+
+    document.getElementById('btn-zoom-in').onclick = () => { scale = Math.min(8.0, scale * 1.2); updateTransform(); };
+    document.getElementById('btn-zoom-out').onclick = () => { scale = Math.max(0.1, scale / 1.2); updateTransform(); };
+    document.getElementById('btn-reset-view').onclick = () => { scale = 1.0; panX = 0; panY = 0; updateTransform(); };
+
+    // 滑らかなホイールズーム
     workspace.addEventListener('wheel', (e) => {
         e.preventDefault();
-        const zoomFactor = 1.15;
-        let newScale = e.deltaY < 0 ? scale * zoomFactor : scale / zoomFactor;
-        newScale = Math.max(0.1, Math.min(20.0, newScale));
-
+        const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+        const newScale = Math.min(8.0, Math.max(0.1, scale * zoomFactor));
         const rect = workspace.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
-
         panX = mouseX - (mouseX - panX) * (newScale / scale);
         panY = mouseY - (mouseY - panY) * (newScale / scale);
         scale = newScale;
-
-        requestAnimationFrame(updateCanvasTransform);
+        updateTransform();
     }, { passive: false });
 
-    // パン移動（ドラッグ）
+    let isPanning = false;
+    let startPanX = 0, startPanY = 0;
+
     workspace.addEventListener('mousedown', (e) => {
-        if (e.button === 2 || e.altKey || e.target === workspace || e.target === layerBg || e.target.id === 'guide-overlay') {
+        const isPenActive = document.getElementById('btn-pen').classList.contains('active') || document.getElementById('btn-eraser').classList.contains('active');
+        if (e.button === 2 || e.button === 1 || !isPenActive) {
             isPanning = true;
-            startX = e.clientX - panX;
-            startY = e.clientY - panY;
-            workspace.style.cursor = 'grab';
+            startPanX = e.clientX - panX;
+            startPanY = e.clientY - panY;
+            e.preventDefault();
         }
     });
 
     window.addEventListener('mousemove', (e) => {
         if (isPanning) {
-            panX = e.clientX - startX;
-            panY = e.clientY - startY;
-            requestAnimationFrame(updateCanvasTransform);
+            panX = e.clientX - startPanX;
+            panY = e.clientY - startPanY;
+            updateTransform();
         }
+    });
+
+    window.addEventListener('mouseup', () => { isPanning = false; });
+    workspace.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    function createLayer(name = `レイヤー ${layers.length + 1}`) {
+        const id = 'layer_' + Math.random().toString(36).substring(2, 9);
+        const canvas = document.createElement('canvas');
+        canvas.id = id;
+        canvas.className = 'layer-canvas';
+        canvas.width = boardWidth;
+        canvas.height = boardHeight;
+        layersStack.appendChild(canvas);
+        const layerObj = { id, name, canvas, ctx: canvas.getContext('2d', { alpha: true }) };
+        layers.push(layerObj);
+        setActiveLayer(id);
+        updateLayerUI();
+        saveState();
+        return layerObj;
+    }
+
+    function setActiveLayer(id) {
+        activeLayerId = id;
+        layers.forEach(l => { l.canvas.style.zIndex = l.id === id ? '5' : '2'; });
+        updateLayerUI();
+    }
+
+    // レイヤー削除機能の追加
+    window.deleteLayer = function(id) {
+        if (layers.length <= 1) {
+            alert('すべてのレイヤーを削除することはできません。');
+            return;
+        }
+        const index = layers.findIndex(l => l.id === id);
+        if (index !== -1) {
+            layers[index].canvas.remove();
+            layers.splice(index, 1);
+            if (activeLayerId === id) {
+                activeLayerId = layers[layers.length - 1].id;
+            }
+            updateLayerUI();
+            saveState();
+        }
+    };
+
+    function updateLayerUI() {
+        const list = document.getElementById('layer-list');
+        list.innerHTML = '';
+        layers.slice().reverse().forEach(l => {
+            const item = document.createElement('div');
+            item.className = `layer-item ${l.id === activeLayerId ? 'active' : ''}`;
+            item.style.display = 'flex';
+            item.style.justifyContent = 'space-between';
+            item.style.alignItems = 'center';
+            item.style.padding = '6px';
+            item.style.margin = '4px 0';
+            item.style.background = l.id === activeLayerId ? '#2a472e' : '#222';
+            item.style.borderRadius = '4px';
+            item.style.cursor = 'pointer';
+
+            item.innerHTML = `
+                <span class="layer-name" style="flex-grow:1; color:#fff; font-size:12px;" onclick="setActiveLayer('${l.id}')">${l.name}</span>
+                <div>
+                    ${layers.length > 1 ? `<button onclick="deleteLayer('${l.id}')" style="background:none; border:none; cursor:pointer; font-size:14px; color:#ff5722;" title="削除">🗑️</button>` : ''}
+                </div>
+            `;
+            list.appendChild(item);
+        });
+    }
+
+    document.getElementById('btn-add-layer').onclick = () => createLayer(`レイヤー ${layers.length + 1}`);
+    createLayer('レイヤー 1');
+
+    function getActiveCtx() {
+        const found = layers.find(l => l.id === activeLayerId);
+        return found ? found.ctx : null;
+    }
+
+    function saveState() {
+        const state = layers.map(l => l.canvas.toDataURL());
+        undoStack.push(state);
+        if (undoStack.length > 20) undoStack.shift(); // メモリ効率化のため履歴数を制限
+        redoStack = [];
+    }
+
+    document.getElementById('btn-undo').onclick = () => {
+        if (undoStack.length <= 1) return;
+        redoStack.push(undoStack.pop());
+        restoreState(undoStack[undoStack.length - 1]);
+    };
+
+    document.getElementById('btn-redo').onclick = () => {
+        if (redoStack.length === 0) return;
+        const nextState = redoStack.pop();
+        undoStack.push(nextState);
+        restoreState(nextState);
+    };
+
+    function restoreState(stateArr) {
+        stateArr.forEach((dataUrl, idx) => {
+            if (!layers[idx]) createLayer(`レイヤー ${idx + 1}`);
+            const img = new Image();
+            img.onload = () => {
+                const ctx = layers[idx].ctx;
+                ctx.clearRect(0, 0, boardWidth, boardHeight);
+                ctx.drawImage(img, 0, 0);
+            };
+            img.src = dataUrl;
+        });
+    }
+
+    let drawing = false;
+    let points = [];
+    let penColor = '#000000';
+    let penSize = 8.0;
+    let penOpacity = 1.0;
+    let isEraser = false;
+    let currentWidth = 8.0;
+    let smoothedX = 0;
+    let smoothedY = 0;
+
+    document.getElementById('color-picker').oninput = (e) => penColor = e.target.value;
+    document.getElementById('bg-color-picker').oninput = (e) => {
+        bgCtx.fillStyle = e.target.value;
+        bgCtx.fillRect(0, 0, boardWidth, boardHeight);
+    };
+    
+    document.getElementById('btn-size-plus').onclick = () => { penSize = Math.min(50, penSize + 1); document.getElementById('size-display').innerText = penSize.toFixed(1); };
+    document.getElementById('btn-size-minus').onclick = () => { penSize = Math.max(1, penSize - 1); document.getElementById('size-display').innerText = penSize.toFixed(1); };
+    document.getElementById('btn-opacity-plus').onclick = () => { penOpacity = Math.min(1.0, penOpacity + 0.1); document.getElementById('opacity-display').innerText = penOpacity.toFixed(1); };
+    document.getElementById('btn-opacity-minus').onclick = () => { penOpacity = Math.max(0.1, penOpacity - 0.1); document.getElementById('opacity-display').innerText = penOpacity.toFixed(1); };
+
+    document.getElementById('btn-pen').onclick = () => { isEraser = false; document.getElementById('btn-pen').classList.add('active'); document.getElementById('btn-eraser').classList.remove('active'); };
+    document.getElementById('btn-eraser').onclick = () => { isEraser = true; document.getElementById('btn-eraser').classList.add('active'); document.getElementById('btn-pen').classList.remove('active'); };
+
+    const firstCanvas = layers[0].canvas;
+
+    firstCanvas.addEventListener('mousedown', (e) => {
+        if (e.button !== 0 || isPanning) return;
+        drawing = true;
+        const rect = firstCanvas.getBoundingClientRect();
+        
+        smoothedX = (e.clientX - rect.left) / scale;
+        smoothedY = (e.clientY - rect.top) / scale;
+        
+        points = [{ x: smoothedX, y: smoothedY, time: Date.now() }];
+        currentWidth = penSize;
+
+        localDraftCtx.clearRect(0, 0, boardWidth, boardHeight);
+        localDraftCanvas.style.opacity = penOpacity;
+        
+        socket.emit('draw', { state: 'start', user: currentUsername, opacity: penOpacity });
     });
 
     window.addEventListener('mouseup', () => {
-        isPanning = false;
-        workspace.style.cursor = 'default';
-    });
+        if (drawing) {
+            const ctx = getActiveCtx();
+            if (ctx) {
+                ctx.globalAlpha = isEraser ? 1.0 : penOpacity;
+                ctx.drawImage(localDraftCanvas, 0, 0);
+                ctx.globalAlpha = 1.0;
+            }
+            localDraftCtx.clearRect(0, 0, boardWidth, boardHeight);
+            
+            socket.emit('draw', { state: 'end', user: currentUsername, layerId: activeLayerId, eraser: isEraser, opacity: penOpacity });
 
-    workspace.addEventListener('contextmenu', (e) => e.preventDefault());
-}
-
-function resizeCanvasBackground() {
-    layerBg.width = window.innerWidth;
-    layerBg.height = window.innerHeight;
-    drawBackgroundGrid();
-}
-
-function drawBackgroundGrid() {
-    bgCtx.fillStyle = bgColor;
-    bgCtx.fillRect(0, 0, layerBg.width, layerBg.height);
-}
-
-function updateCanvasTransform() {
-    zoomDisplay.textContent = `${Math.round(scale * 100)}%`;
-    canvasContainer.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
-    canvasContainer.style.transformOrigin = '0 0';
-}
-
-btnZoomIn.addEventListener('click', () => {
-    scale = Math.min(20.0, scale * 1.25);
-    updateCanvasTransform();
-});
-
-btnZoomOut.addEventListener('click', () => {
-    scale = Math.max(0.1, scale / 1.25);
-    updateCanvasTransform();
-});
-
-btnResetView.addEventListener('click', () => {
-    scale = 1.0;
-    panX = 0;
-    panY = 0;
-    updateCanvasTransform();
-});
-
-// レイヤー管理（新規追加・削除機能搭載）
-function addNewLayer(name, isBg = false) {
-    const layerId = `layer_${layerCounter++}`;
-    const canvas = document.createElement('canvas');
-    canvas.width = 4000;
-    canvas.height = 3000;
-    canvas.className = 'draw-layer';
-    canvas.id = layerId;
-
-    layersStack.appendChild(canvas);
-
-    const ctx = canvas.getContext('2d', { alpha: true });
-    layers.push({ id: layerId, name: name, canvas: canvas, ctx: ctx, visible: true, isBg: isBg });
-
-    if (!isBg || activeLayerId === null) {
-        setActiveLayer(layerId);
-    }
-    updateLayerListUI();
-}
-
-function setActiveLayer(layerId) {
-    activeLayerId = layerId;
-    updateLayerListUI();
-}
-
-function updateLayerListUI() {
-    const layerList = document.getElementById('layer-list');
-    layerList.innerHTML = '';
-    layers.slice().reverse().forEach(layer => {
-        const item = document.createElement('div');
-        item.className = `layer-item ${layer.id === activeLayerId ? 'active' : ''}`;
-        item.style.display = 'flex';
-        item.style.justifyContent = 'space-between';
-        item.style.alignItems = 'center';
-        item.style.padding = '6px';
-        item.style.margin = '4px 0';
-        item.style.background = layer.id === activeLayerId ? '#2a472e' : '#222';
-        item.style.borderRadius = '4px';
-        item.style.cursor = 'pointer';
-
-        item.innerHTML = `
-            <span onclick="setActiveLayer('${layer.id}')" style="flex-grow:1; color:#fff; font-size:12px;">${layer.name}</span>
-            <div>
-                <button onclick="toggleLayerVisibility('${layer.id}')" style="background:none; border:none; cursor:pointer; font-size:14px;" title="表示切替">${layer.visible ? '👁️' : '🚫'}</button>
-                ${!layer.isBg && layers.length > 1 ? `<button onclick="deleteLayer('${layer.id}')" style="background:none; border:none; cursor:pointer; font-size:14px; margin-left:6px;" title="削除">🗑️</button>` : ''}
-            </div>
-        `;
-        layerList.appendChild(item);
-    });
-}
-
-window.toggleLayerVisibility = function(layerId) {
-    const layer = layers.find(l => l.id === layerId);
-    if (layer) {
-        layer.visible = !layer.visible;
-        layer.canvas.style.display = layer.visible ? 'block' : 'none';
-        updateLayerListUI();
-    }
-}
-
-window.deleteLayer = function(layerId) {
-    if (layers.length <= 1) {
-        alert('すべてのレイヤーを削除することはできません。');
-        return;
-    }
-    const index = layers.findIndex(l => l.id === layerId);
-    if (index !== -1) {
-        layers[index].canvas.remove();
-        layers.splice(index, 1);
-        if (activeLayerId === layerId) {
-            activeLayerId = layers[layers.length - 1].id;
+            drawing = false;
+            points = [];
+            saveState();
         }
-        updateLayerListUI();
-    }
-}
-
-document.getElementById('btn-add-layer').addEventListener('click', () => {
-    addNewLayer(`レイヤー ${layers.length}`);
-});
-
-function getActiveCtx() {
-    const active = layers.find(l => l.id === activeLayerId);
-    return active ? active.ctx : null;
-}
-
-function getActiveCanvas() {
-    const active = layers.find(l => l.id === activeLayerId);
-    return active ? active.canvas : null;
-}
-
-layersStack.addEventListener('mousedown', (e) => {
-    if (isPanning) return;
-    const canvas = getActiveCanvas();
-    if (!canvas) return;
-
-    isDrawing = true;
-    const rect = canvas.getBoundingClientRect();
-    lastX = (e.clientX - rect.left) / scale;
-    lastY = (e.clientY - rect.top) / scale;
-});
-
-layersStack.addEventListener('mousemove', (e) => {
-    if (!isDrawing || isPanning) return;
-    const canvas = getActiveCanvas();
-    const ctx = getActiveCtx();
-    if (!canvas || !ctx) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const currentX = (e.clientX - rect.left) / scale;
-    const currentY = (e.clientY - rect.top) / scale;
-
-    ctx.beginPath();
-    ctx.moveTo(lastX, lastY);
-    ctx.lineTo(currentX, currentY);
-
-    if (currentTool === 'eraser') {
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.lineWidth = penSize * 2;
-    } else {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.strokeStyle = penColor;
-        ctx.lineWidth = penSize;
-        ctx.globalAlpha = penOpacity;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-    }
-    ctx.stroke();
-
-    socket.emit('draw', {
-        x0: lastX, y0: lastY, x1: currentX, y1: currentY,
-        color: penColor, size: penSize, tool: currentTool, layerId: activeLayerId
     });
 
-    lastX = currentX;
-    lastY = currentY;
-});
+    firstCanvas.addEventListener('mousemove', (e) => {
+        if (!drawing) return;
+        const rect = firstCanvas.getBoundingClientRect();
+        let rawX = (e.clientX - rect.left) / scale;
+        let rawY = (e.clientY - rect.top) / scale;
 
-window.addEventListener('mouseup', () => {
-    isDrawing = false;
-});
+        if (document.getElementById('ai-stroke-toggle').checked) {
+            smoothedX += (rawX - smoothedX) * 0.4;
+            smoothedY += (rawY - smoothedY) * 0.4;
+        } else {
+            smoothedX = rawX;
+            smoothedY = rawY;
+        }
 
-socket.on('draw_sync', (data) => {
-    const targetLayer = layers.find(l => l.id === data.layerId);
-    if (!targetLayer || !targetLayer.visible) return;
-    const ctx = targetLayer.ctx;
+        const lastP = points[points.length - 1];
+        if (lastP && Math.hypot(smoothedX - lastP.x, smoothedY - lastP.y) < 0.5) return;
 
-    ctx.beginPath();
-    ctx.moveTo(data.x0, data.y0);
-    ctx.lineTo(data.x1, data.y1);
-    if (data.tool === 'eraser') {
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.lineWidth = data.size * 2;
-    } else {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.strokeStyle = data.color;
-        ctx.lineWidth = data.size;
-    }
-    ctx.stroke();
-});
+        points.push({ x: smoothedX, y: smoothedY, time: Date.now() });
+        if (points.length < 2) return;
 
-btnPen.addEventListener('click', () => { currentTool = 'pen'; btnPen.classList.add('active'); btnEraser.classList.remove('active'); });
-btnEraser.addEventListener('click', () => { currentTool = 'eraser'; btnEraser.classList.add('active'); btnPen.classList.remove('active'); });
-colorPicker.addEventListener('input', (e) => penColor = e.target.value);
-bgColorPicker.addEventListener('input', (e) => {
-    bgColor = e.target.value;
-    drawBackgroundGrid();
-});
+        const pPrev = points[points.length - 2];
+        const pCurr = points[points.length - 1];
 
-btnSizePlus.addEventListener('click', () => { penSize = Math.min(100, penSize + 1); sizeDisplay.textContent = penSize.toFixed(1); });
-btnSizeMinus.addEventListener('click', () => { penSize = Math.max(1, penSize - 1); sizeDisplay.textContent = penSize.toFixed(1); });
+        localDraftCtx.strokeStyle = isEraser ? '#ffffff' : penColor;
+        localDraftCtx.lineWidth = penSize;
+        if (isEraser) {
+            localDraftCtx.globalCompositeOperation = 'destination-out';
+        } else {
+            localDraftCtx.globalCompositeOperation = 'source-over';
+        }
+        localDraftCtx.lineCap = 'round';
+        localDraftCtx.lineJoin = 'round';
 
-btnOpacityPlus.addEventListener('click', () => { penOpacity = Math.min(1.0, penOpacity + 0.1); opacityDisplay.textContent = penOpacity.toFixed(1); });
-btnOpacityMinus.addEventListener('click', () => { penOpacity = Math.max(0.1, penOpacity - 0.1); opacityDisplay.textContent = penOpacity.toFixed(1); });
+        localDraftCtx.beginPath();
+        localDraftCtx.moveTo(pPrev.x, pPrev.y);
+        localDraftCtx.lineTo(pCurr.x, pCurr.y);
+        localDraftCtx.stroke();
+        localDraftCtx.closePath();
 
-aiStrokeToggle.addEventListener('change', (e) => aiStrokeCorrection = e.target.checked);
-btnToggleNoise.addEventListener('click', () => {
-    aiNoiseCut = !aiNoiseCut;
-    btnToggleNoise.textContent = aiNoiseCut ? 'ON' : 'OFF';
-    btnToggleNoise.style.background = aiNoiseCut ? '#27ae60' : '#c0392b';
-});
+        socket.emit('draw', { 
+            state: 'draw', user: currentUsername,
+            x0: pPrev.x, y0: pPrev.y, x1: pCurr.x, y1: pCurr.y, 
+            color: penColor, size: penSize, eraser: isEraser 
+        });
+    });
 
-// チャット＆AIアドバイザー機能
-btnToggleChat.addEventListener('click', () => chatPanel.classList.toggle('hidden'));
-btnTogglePanel.addEventListener('click', () => layerPanel.classList.toggle('hidden'));
+    socket.on('draw_sync', (data) => {
+        if (data.state === 'start') {
+            const remote = getRemoteDraft(data.user);
+            remote.ctx.clearRect(0, 0, boardWidth, boardHeight);
+            remote.canvas.style.opacity = data.opacity;
+        } else if (data.state === 'end') {
+            const remote = getRemoteDraft(data.user);
+            const targetLayer = layers.find(l => l.id === data.layerId) || layers[0];
+            targetLayer.ctx.globalAlpha = data.eraser ? 1.0 : data.opacity;
+            if (data.eraser) targetLayer.ctx.globalCompositeOperation = 'destination-out';
+            targetLayer.ctx.drawImage(remote.canvas, 0, 0);
+            targetLayer.ctx.globalAlpha = 1.0;
+            targetLayer.ctx.globalCompositeOperation = 'source-over';
+            remote.ctx.clearRect(0, 0, boardWidth, boardHeight);
+        } else if (data.state === 'draw') {
+            const remote = getRemoteDraft(data.user);
+            remote.ctx.strokeStyle = data.color;
+            remote.ctx.lineWidth = data.size;
+            if (data.eraser) {
+                remote.ctx.globalCompositeOperation = 'destination-out';
+            } else {
+                remote.ctx.globalCompositeOperation = 'source-over';
+            }
+            remote.ctx.lineCap = 'round';
+            remote.ctx.lineJoin = 'round';
+            
+            remote.ctx.beginPath();
+            remote.ctx.moveTo(data.x0, data.y0);
+            remote.ctx.lineTo(data.x1, data.y1);
+            remote.ctx.stroke();
+            remote.ctx.closePath();
+        }
+    });
 
-btnSendChat.addEventListener('click', sendChatMessage);
-inputChat.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendChatMessage();
-    }
-});
+    document.getElementById('btn-save').onclick = () => {
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = boardWidth;
+        tempCanvas.height = boardHeight;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(bgCanvas, 0, 0);
+        layers.forEach(l => tempCtx.drawImage(l.canvas, 0, 0));
 
-function sendChatMessage() {
-    const text = inputChat.value.trim();
-    if (!text) return;
-    socket.emit('send_message', { message: text });
-    inputChat.value = '';
+        const link = document.createElement('a');
+        link.download = 'whiteboard.png';
+        link.href = tempCanvas.toDataURL();
+        link.click();
+    };
 }
 
-btnAiConsult.addEventListener('click', () => {
-    const promptText = prompt('AIアドバイザーへの質問やブレインストーミングのテーマを入力してください:', 'このプロジェクトのアイデアを提案して');
-    if (promptText) {
-        socket.emit('ask_ai', { prompt: promptText });
-    }
-});
+let localStream, peerConnection;
+const rtcConfig = { 'iceServers': [{'urls': 'stun:stun.l.google.com:19302'}] };
 
-// チャットメッセージを確実に画面に描画（未表示バグ修正済）
-socket.on('receive_message', (data) => {
-    const msgDiv = document.createElement('div');
-    msgDiv.className = `chat-message ${data.user === username ? 'self' : ''}`;
-    msgDiv.style.margin = '8px 0';
-    msgDiv.style.padding = '8px 12px';
-    msgDiv.style.borderRadius = '8px';
-    msgDiv.style.background = data.user.includes('AI') ? '#2c3e50' : (data.user === username ? '#1b4d3e' : '#333');
-    msgDiv.style.color = '#fff';
-    msgDiv.style.fontSize = '13px';
-    
-    msgDiv.innerHTML = `<strong style="color: ${data.user.includes('AI') ? '#f1c40f' : '#81c784'};">${data.user}</strong>: ${data.message}`;
-    chatMessages.appendChild(msgDiv);
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-});
+async function initWebRTC() {
+    document.getElementById('remote-box').style.display = 'none';
 
-async function initMediaStream() {
     try {
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         document.getElementById('localVideo').srcObject = localStream;
-    } catch (err) {
-        console.warn('カメラ・マイクの取得に失敗しました:', err);
+        setupSpeakerGate(localStream);
+        setupSignaling();
+    } catch(e) {
+        console.warn("メディアデバイス取得失敗:", e);
     }
+}
+
+function setupSignaling() {
+    peerConnection = new RTCPeerConnection(rtcConfig);
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+    peerConnection.ontrack = (event) => {
+        const remoteVideo = document.getElementById('remoteVideo');
+        if (remoteVideo.srcObject !== event.streams[0]) {
+            remoteVideo.srcObject = event.streams[0];
+            remoteVideo.play().catch(e => console.error("リモート音声再生エラー:", e));
+        }
+        document.getElementById('remote-box').style.display = 'block';
+    };
+
+    peerConnection.onicecandidate = (event) => {
+        if (event.candidate) {
+            socket.emit('webrtc_ice_candidate', { candidate: event.candidate, username: currentUsername });
+        }
+    };
+
+    peerConnection.createOffer().then(offer => {
+        peerConnection.setLocalDescription(offer);
+        socket.emit('webrtc_offer', { sdp: offer, username: currentUsername });
+    });
+
+    socket.on('webrtc_offer', async (data) => {
+        if (data.username) {
+            document.getElementById('remote-user-name').innerText = data.username;
+        }
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        socket.emit('webrtc_answer', { sdp: answer, username: currentUsername });
+    });
+
+    socket.on('webrtc_answer', async (data) => {
+        if (data.username) {
+            document.getElementById('remote-user-name').innerText = data.username;
+        }
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
+    });
+
+    socket.on('webrtc_ice_candidate', async (data) => {
+        try { await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate)); } catch(e){}
+    });
+}
+
+function setupSpeakerGate(stream) {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = audioCtx.createAnalyser();
+    const source = audioCtx.createMediaStreamSource(stream);
+    source.connect(analyser);
+    analyser.fftSize = 256;
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+    
+    const audioTrack = stream.getAudioTracks()[0];
+    let isManualMuted = false;
+    let holdTimer = null;
+    let isSpeaking = false;
+    
+    document.getElementById('btn-toggle-mic').onclick = function() {
+        if (!audioTrack) return;
+        isManualMuted = !isManualMuted;
+        this.classList.toggle('active', !isManualMuted);
+        audioTrack.enabled = !isManualMuted;
+        if (isManualMuted) {
+            document.getElementById('local-box').classList.remove('speaking');
+        }
+    };
+
+    setInterval(() => {
+        if (isManualMuted || !audioTrack) return; 
+        analyser.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for(let i = 2; i < 40; i++) sum += dataArray[i];
+        
+        const localBox = document.getElementById('local-box');
+        const THRESHOLD = 350; 
+        
+        if (sum > THRESHOLD) {
+            isSpeaking = true;
+            localBox.classList.add('speaking');
+            audioTrack.enabled = true; 
+            if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+        } else {
+            if (isSpeaking && !holdTimer) {
+                holdTimer = setTimeout(() => {
+                    isSpeaking = false;
+                    localBox.classList.remove('speaking');
+                }, 1000); 
+            }
+        }
+    }, 50);
+}
+
+function initChat() {
+    const chatPanel = document.getElementById('chat-panel');
+    const chatMsgs = document.getElementById('chat-messages');
+    const chatInput = document.getElementById('input-chat');
+    let aiTimeoutTimer = null;
+
+    document.getElementById('btn-toggle-chat').onclick = () => {
+        chatPanel.classList.toggle('hidden');
+    };
+
+    const sendMessageAction = () => {
+        const txt = chatInput.value.trim();
+        if(txt) {
+            socket.emit('send_message', { message: txt, file: null, file_type: '', file_name: '' });
+            chatInput.value = '';
+            chatInput.style.height = 'auto';
+        }
+    };
+
+    document.getElementById('btn-send-chat').onclick = sendMessageAction;
+
+    chatInput.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+    });
+
+    chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            sendMessageAction();
+        }
+    });
+
+    const btnAttach = document.getElementById('btn-attach-file');
+    const inputFile = document.getElementById('input-file');
+    btnAttach.onclick = () => inputFile.click();
+
+    inputFile.onchange = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+
+        reader.onload = (ev) => {
+            socket.emit('send_message', { 
+                message: `ファイルを送信しました: ${file.name}`, 
+                file: ev.target.result, 
+                file_type: file.type || '',
+                file_name: file.name 
+            });
+        };
+        reader.readAsDataURL(file);
+        inputFile.value = ''; 
+    };
+
+    // AIアドバイザー呼び出し機能の修復
+    document.getElementById('btn-ai-consult').onclick = () => {
+        let txt = chatInput.value.trim();
+        if (!txt) {
+            txt = "こんにちは！ブレインストーミングの提案をしてください。";
+        }
+
+        socket.emit('ask_ai', { prompt: txt });
+        
+        chatMsgs.innerHTML += `
+            <div class="chat-msg other" id="ai-thinking-indicator">
+                <span class="chat-sender">🤖 AIアドバイザー</span>
+                <div class="chat-bubble-container">
+                    <div class="chat-bubble">情報を検索・思考中...</div>
+                </div>
+            </div>`;
+        chatMsgs.scrollTop = chatMsgs.scrollHeight;
+        chatInput.value = ''; 
+        chatInput.style.height = 'auto';
+
+        if (aiTimeoutTimer) clearTimeout(aiTimeoutTimer);
+        
+        aiTimeoutTimer = setTimeout(() => {
+            const indicator = document.getElementById('ai-thinking-indicator');
+            if (indicator) {
+                indicator.remove();
+                chatMsgs.innerHTML += `
+                    <div class="chat-msg other">
+                        <span class="chat-sender">🤖 AIアドバイザー</span>
+                        <div class="chat-bubble-container">
+                            <div class="chat-bubble" style="color: #ff9800;">応答に時間がかかっています。ネットワーク環境をご確認ください。</div>
+                        </div>
+                    </div>`;
+                chatMsgs.scrollTop = chatMsgs.scrollHeight;
+            }
+        }, 45000);
+    };
+
+    // グループチャットのメッセージ未表示バグを完全に修正（受信時確実描画）
+    socket.on('receive_message', (data) => {
+        const thinkingIndicator = document.getElementById('ai-thinking-indicator');
+        if (thinkingIndicator && data.user.includes('AI')) {
+            thinkingIndicator.remove();
+            if (aiTimeoutTimer) clearTimeout(aiTimeoutTimer);
+        }
+
+        const isMine = data.user === currentUsername;
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `chat-msg ${isMine ? 'mine' : 'other'}`;
+        msgDiv.id = `msg-${data.id}`;
+
+        let safeMessage = '';
+        if (data.message) {
+            safeMessage = String(data.message)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;')
+                .replace(/\n/g, '<br>');
+        }
+
+        let content = safeMessage ? `<span>${safeMessage}</span>` : '';
+        
+        if (data.file) {
+            const fileName = data.file_name || 'download_file';
+            if (data.file_type && data.file_type.startsWith('image/')) {
+                content += `<div style="margin-top:5px;"><img src="${data.file}" style="max-width: 100%; border-radius: 4px;"><br><a href="${data.file}" download="${fileName}" style="color: #4CAF50; font-size: 11px; text-decoration: underline; display:inline-block; margin-top:4px;">⬇️ 画像をダウンロード</a></div>`;
+            } else {
+                content += `<div style="margin-top:5px;"><a href="${data.file}" download="${fileName}" style="background: #007bff; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; text-decoration: none; display: inline-block; font-weight: bold;">📥 ${fileName} をダウンロード</a></div>`;
+            }
+        }
+
+        let deleteBtnHTML = isMine && data.id ? `<button onclick="deleteMessage(${data.id})" style="background:none; border:none; color:#ff5722; font-size:10px; cursor:pointer; padding:0; margin-left:6px;" title="削除">🗑️ 削除</button>` : '';
+        let readCountHTML = `<span style="font-size:10px; color:#aaa; margin-left:4px;">既読 ${data.read_count || 1}</span>`;
+
+        msgDiv.innerHTML = `
+            <span class="chat-sender">${data.user}</span>
+            <div class="chat-bubble-container">
+                <div class="chat-bubble">${content}</div>
+                <div style="display:flex; flex-direction:column; align-items:flex-end;">
+                    ${readCountHTML}
+                    ${deleteBtnHTML}
+                </div>
+            </div>`;
+        chatMsgs.appendChild(msgDiv);
+        chatMsgs.scrollTop = chatMsgs.scrollHeight;
+    });
+
+    socket.on('message_deleted', (data) => {
+        const target = document.getElementById(`msg-${data.id}`);
+        if (target) {
+            const bubble = target.querySelector('.chat-bubble');
+            if (bubble) bubble.innerHTML = '<span style="color:#888; font-style:italic;">このメッセージは削除されました</span>';
+        }
+    });
+}
+
+window.deleteMessage = function(id) {
+    if (confirm('このメッセージを削除しますか？')) {
+        socket.emit('delete_message', { id: id });
+    }
+};
+
+function initLayoutAndDrag() {
+    const gallery = document.getElementById('video-gallery');
+    const container = document.getElementById('video-chat-container');
+    const mainContent = document.getElementById('main-content');
+    let layoutMode = 'wipe';
+
+    document.getElementById('btn-toggle-layout').onclick = () => {
+        if (layoutMode === 'wipe') {
+            layoutMode = 'sidebar';
+            gallery.className = 'sidebar-mode';
+            mainContent.classList.remove('top-layout');
+            gallery.style.cssText = '';
+        } else if (layoutMode === 'sidebar') {
+            layoutMode = 'top';
+            gallery.className = 'top-mode';
+            mainContent.classList.add('top-layout');
+            gallery.style.cssText = '';
+        } else {
+            layoutMode = 'wipe';
+            gallery.className = 'wipe-mode';
+            mainContent.classList.remove('top-layout');
+            gallery.style.top = '15px';
+            gallery.style.right = '20px';
+            gallery.style.left = 'auto';
+            gallery.style.bottom = 'auto';
+        }
+    };
+
+    let isDragging = false, startX, startY;
+    container.addEventListener('mousedown', (e) => {
+        if (layoutMode !== 'wipe') return;
+        isDragging = true;
+        startX = e.clientX - gallery.offsetLeft;
+        startY = e.clientY - gallery.offsetTop;
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isDragging || layoutMode !== 'wipe') return;
+        gallery.style.left = (e.clientX - startX) + 'px';
+        gallery.style.top = (e.clientY - startY) + 'px';
+        gallery.style.right = 'auto';
+    });
+
+    window.addEventListener('mouseup', () => { isDragging = false; });
+
+    document.getElementById('btn-toggle-cam').onclick = function() {
+        if (!localStream) return;
+        const videoTrack = localStream.getVideoTracks()[0];
+        if (videoTrack) {
+            videoTrack.enabled = !videoTrack.enabled;
+            this.classList.toggle('active', videoTrack.enabled);
+            document.getElementById('local-box').classList.toggle('video-off', !videoTrack.enabled);
+        }
+    };
+
+    document.getElementById('btn-toggle-noise').onclick = function() {
+        this.classList.toggle('active');
+        this.style.background = this.classList.contains('active') ? '#27ae60' : '#444';
+        this.innerText = this.classList.contains('active') ? 'ON' : 'OFF';
+    };
+
+    document.getElementById('btn-toggle-panel').onclick = () => {
+        document.getElementById('layer-panel').classList.toggle('hidden');
+    };
+
+    document.getElementById('btn-leave').onclick = () => {
+        window.location.href = '/logout';
+    };
+
+    document.getElementById('btn-copy-url').onclick = () => {
+        navigator.clipboard.writeText(window.location.href);
+        alert('招待URLをコピーしました！');
+    };
 }
