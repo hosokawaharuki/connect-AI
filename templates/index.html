@@ -114,7 +114,6 @@
                 <div id="chat-input-area">
                     <button id="btn-attach-file" title="画像やファイルを送信">📎</button>
                     <input type="file" id="input-file" style="display: none;">
-                    <!-- 【変更】inputからtextareaに変更して複数行の改行入力を可能に -->
                     <textarea id="input-chat" placeholder="相談やメッセージを入力..." rows="1"></textarea>
                     <button id="btn-send-chat">送信</button>
                 </div>
@@ -140,7 +139,8 @@
             </div>
         </div>
     </div>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <!-- 【修正】外部CDNではなく、Flask-SocketIOサーバーが自動配信するスクリプトに変更 -->
+    <script src="/socket.io/socket.io.js"></script>
     <script type="module" src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

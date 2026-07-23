@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 import os
 import subprocess
 import threading
@@ -21,7 +24,9 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'conect_ai_super_secret_key')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
 db = SQLAlchemy(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', max_http_buffer_size=100 * 1024 * 1024)
+
+# クラウド環境では 'eventlet' を明示的に指定し、通信エラーを防止
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', max_http_buffer_size=100 * 1024 * 1024)
 
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
@@ -40,7 +45,6 @@ def start_ollama_automatically():
     except Exception as e:
         print(f"⚠️ Ollamaの自動起動に失敗しました: {e}")
 
-# 環境変数からOpenAI APIキーを取得（セキュリティ保護対応）
 openai_api_key = os.environ.get('OPENAI_API_KEY')
 
 if openai_api_key:
