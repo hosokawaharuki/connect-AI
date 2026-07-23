@@ -21,7 +21,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'conect_ai_super_secret_key')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
 db = SQLAlchemy(app)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', max_http_buffer_size=100 * 1024 * 1024)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', max_http_buffer_size=50 * 1024 * 1024)
 
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
@@ -45,12 +45,14 @@ openai_api_key = os.environ.get('OPENAI_API_KEY')
 if openai_api_key:
     client = openai.OpenAI(api_key=openai_api_key)
     AI_MODEL = "gpt-4o-mini"
+    print("✨ OpenAI APIモードで起動します (Model: gpt-4o-mini)")
 else:
     client = openai.OpenAI(
         base_url="http://localhost:11434/v1",
         api_key="ollama"
     )
     AI_MODEL = "qwen2.5:1.5b"
+    print("🤖 ローカルOllamaモードで起動します (Model: qwen2.5:1.5b)")
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -196,11 +198,13 @@ def async_ai_task(prompt, app_instance, room):
                 ],
                 max_tokens=150,
                 temperature=0.1,
-                timeout=30
+                timeout=25
             )
             answer_text = response.choices[0].message.content.strip()
         except Exception as e:
-            answer_text = f"申し訳ありません。応答の生成中にエラーが発生しました。（詳細: {str(e)}）"
+            # エラー内容をそのまま返すことで、APIキー未設定やクォータエラーなどの原因を特定可能にします
+            answer_text = f"⚠️ AI応答エラーが発生しました: {str(e)}"
+            print(f"AI Error: {e}")
         
         with app_instance.app_context():
             new_msg = ChatMessage(user_id=1, message=answer_text, read_count=1, is_deleted=False)
@@ -223,7 +227,7 @@ def on_ask_ai(data):
     socketio.emit('receive_message', {
         'id': 0,
         'user': '🤖 AIアドバイザー',
-        'message': f'「{prompt}」について情報収集・思考中...',
+        'message': f'「{prompt}」について思考中...',
         'read_count': 1
     }, room=room)
     

@@ -32,14 +32,14 @@ function initWhiteboard() {
     const canvasContainer = document.getElementById('canvas-container');
     const workspace = document.getElementById('workspace');
     
-    const boardWidth = 12000;
-    const boardHeight = 12000;
+    // 処理の軽量化とメモリ最適化のため最適なボードサイズを設定
+    const boardWidth = 8000;
+    const boardHeight = 8000;
     
     bgCanvas.width = boardWidth;
     bgCanvas.height = boardHeight;
     const bgCtx = bgCanvas.getContext('2d', { alpha: false });
     
-    // 初期背景色の適用とワークスペース背景の連動
     const initialBgColor = document.getElementById('bg-color-picker').value;
     bgCtx.fillStyle = initialBgColor;
     bgCtx.fillRect(0, 0, boardWidth, boardHeight);
@@ -202,7 +202,7 @@ function initWhiteboard() {
     function saveState() {
         const state = layers.map(l => l.canvas.toDataURL());
         undoStack.push(state);
-        if (undoStack.length > 15) undoStack.shift();
+        if (undoStack.length > 10) undoStack.shift(); // 軽量化のため履歴上限を削減
         redoStack = [];
     }
 
@@ -243,8 +243,6 @@ function initWhiteboard() {
     let smoothedY = 0;
 
     document.getElementById('color-picker').oninput = (e) => penColor = e.target.value;
-    
-    // 背景色変更時にキャンバス背景およびワークスペース背景を完全に同期
     document.getElementById('bg-color-picker').oninput = (e) => {
         const newColor = e.target.value;
         bgCtx.fillStyle = newColor;
@@ -262,6 +260,7 @@ function initWhiteboard() {
 
     const firstCanvas = layers[0].canvas;
 
+    // 座標ズレを完全に防ぐ正確なマッピング
     function getCanvasCoords(e) {
         const rect = firstCanvas.getBoundingClientRect();
         return {
@@ -330,6 +329,7 @@ function initWhiteboard() {
 
         localDraftCtx.strokeStyle = isEraser ? '#ffffff' : penColor;
         
+        // Gペン（速度に応じた強弱の筆圧表現）
         const penType = document.getElementById('pen-type').value;
         let activeSize = penSize;
         if (penType === 'gpen' && !isEraser) {
@@ -474,6 +474,7 @@ function setupSignaling() {
     });
 }
 
+// 音声解析のインターバルを延ばして軽量化
 function setupSpeakerGate(stream) {
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const analyser = audioCtx.createAnalyser();
@@ -519,7 +520,7 @@ function setupSpeakerGate(stream) {
                 }, 1000); 
             }
         }
-    }, 50);
+    }, 100); // 100msに調整してCPU負荷を軽減
 }
 
 function initChat() {
