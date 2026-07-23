@@ -1,6 +1,3 @@
-import eventlet
-eventlet.monkey_patch()
-
 import os
 import subprocess
 import threading
@@ -25,8 +22,8 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'conect_ai_super_secret_
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///app.db'
 db = SQLAlchemy(app)
 
-# クラウド環境では 'eventlet' を明示的に指定し、通信エラーを防止
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', max_http_buffer_size=100 * 1024 * 1024)
+# eventletを使用せずthreadingモードにすることでPython 3.14でのエラーを回避
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', max_http_buffer_size=100 * 1024 * 1024)
 
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
