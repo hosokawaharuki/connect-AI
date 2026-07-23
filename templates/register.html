@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>新規登録 - conect AI</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="auth-page">
+    <div id="join-modal" style="display: flex;">
+        <div class="modal-content">
+            <h2>アカウント新規登録</h2>
+            <p style="color: #aaa; font-size: 13px; margin-bottom: 15px;">新しいアカウントを作成します</p>
+            {% with messages = get_flashed_messages() %}
+              {% if messages %}
+                <div class="flash" style="color: #ff5722; font-size: 13px; margin-bottom: 10px;">{{ messages[0] }}</div>
+              {% endif %}
+            {% endwith %}
+            <form method="POST">
+                <input type="text" name="username" placeholder="ユーザー名" required>
+                <input type="password" name="password" placeholder="パスワード" required>
+                <button type="submit" style="background: #007bff;">登録する</button>
+            </form>
+            <p style="margin-top: 20px;"><a href="{{ url_for('login') }}" style="color: #4CAF50; text-decoration: none; font-size: 13px;">ログイン画面に戻る</a></p>
+        </div>
+    </div>
+</body>
+</html>

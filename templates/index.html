@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>conect AI</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <script src="{{ url_for('static', filename='line-audio-optimizer.js') }}"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register("{{ url_for('static', filename='sw.js') }}").catch(() => {});
+            });
+        }
+    </script>
+</head>
+<body>
+    <div id="join-modal">
+        <div class="modal-content">
+            <h2>ミーティングに参加</h2>
+            <p>ようこそ、<strong style="color: #4CAF50;" id="display-username">{{ username }}</strong> さん</p>
+            <input type="hidden" id="input-username" value="{{ username }}">
+            <input type="text" id="input-room-id" placeholder="ルームID (空欄で新規作成)" />
+            <button id="btn-join">ボードに入る</button>
+        </div>
+    </div>
+
+    <div id="app-container" style="display: none;">
+        <div id="header-bar">
+            <div class="room-info">
+                <span id="room-id-display">ルームID: ---</span>
+                <button id="btn-copy-url">🔗 招待URLをコピー</button>
+            </div>
+            <div class="call-controls">
+                <button id="btn-toggle-cam" class="active">📹 ビデオ</button>
+                <button id="btn-toggle-mic" class="active">🎤 マイク</button>
+                <button id="btn-toggle-chat" style="background: #28a745;">💬 チャット <span id="chat-badge" style="display: none;">0</span></button>
+                <button id="btn-toggle-layout" style="background: #6f42c1;">🔲 ビュー切替</button>
+                <button id="btn-leave" style="background: #ff5722;">🏃 退出</button>
+                <a href="{{ url_for('logout') }}" id="btn-logout" class="btn-logout-style">🚪 ログアウト</a>
+            </div>
+        </div>
+
+        <div id="toolbar">
+            <div class="tool-group">
+                <button id="btn-undo">↩️ 戻る</button>
+                <button id="btn-redo">↪️ 進む</button>
+                <button id="btn-save" style="background: #e83e8c;">💾 画像保存</button>
+            </div>
+            <div class="tool-group" style="background: #1e3a24; border-radius: 6px; padding: 5px 12px; border: 1px solid #2e7d32;">
+                <label style="color: #81c784; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 5px;">
+                    <input type="checkbox" id="ai-stroke-toggle" checked style="cursor: pointer; transform: scale(1.1);"> 🪄 AIストローク補正
+                </label>
+            </div>
+            <div class="tool-group">
+                <select id="pen-type">
+                    <option value="digital">✒️ デジタルペン</option>
+                    <option value="gpen">🖋️ Gペン </option>
+                </select>
+                <button id="btn-pen" class="active">ペン</button>
+                <button id="btn-eraser">🧽 消しゴム</button>
+            </div>
+            <div class="tool-group">
+                <label>色: <input type="color" id="color-picker" value="#000000"></label>
+            </div>
+            <div class="tool-group">
+                <div class="adjust-group">
+                    <span>太さ:</span>
+                    <button id="btn-size-minus">ー</button>
+                    <span id="size-display" class="adjust-display">8.0</span>
+                    <button id="btn-size-plus">＋</button>
+                </div>
+            </div>
+            <div class="tool-group">
+                <div class="adjust-group">
+                    <span>濃さ:</span>
+                    <button id="btn-opacity-minus">ー</button>
+                    <span id="opacity-display" class="adjust-display">1.0</span>
+                    <button id="btn-opacity-plus">＋</button>
+                </div>
+            </div>
+            <div class="tool-group">
+                <label>背景: <input type="color" id="bg-color-picker" value="#ffffff"></label>
+            </div>
+            <div class="tool-group">
+                <button id="btn-zoom-out">➖ 縮小</button>
+                <span id="zoom-display" class="adjust-display" style="font-size:12px;">100%</span>
+                <button id="btn-zoom-in">➕ 拡大</button>
+                <button id="btn-reset-view">🔎 視点リセット</button>
+                <button id="btn-toggle-panel" style="background: #6c757d;">🗂️ レイヤー</button>
+            </div>
+            <div class="tool-group" style="background: #1a252c; border-radius: 6px; padding: 5px 10px; border: 1px solid #2980b9; display: flex; align-items: center; gap: 8px;">
+                <span style="color: #3498db; font-size: 12px; font-weight: bold;">🤖 AIノイズカット</span>
+                <button id="btn-toggle-noise" class="active" style="background: #27ae60; padding: 4px 10px; font-size: 12px; font-weight: bold;">ON</button>
+            </div>
+        </div>
+
+        <div id="main-content">
+            <div id="workspace">
+                <div id="canvas-container">
+                    <canvas id="layer-bg"></canvas>
+                    <div id="layers-stack"></div>
+                </div>
+                <div id="guide-overlay">ドラッグ / 右クリック: 無限パン移動 / ホイール・2本指: ズーム</div>
+            </div>
+
+            <div id="chat-panel" class="hidden">
+                <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; padding: 12px; background: #151515; font-weight: bold; border-bottom: 1px solid #333; font-size: 13px; color: #fff;">
+                    <span>グループチャット/AI</span>
+                    <button id="btn-ai-consult" style="background: #ffb300; color: #121212; font-size: 11px; padding: 4px 8px; font-weight: bold; border-radius: 4px; border: none; cursor: pointer;">💡 AIアドバイザー</button>
+                </div>
+                <div id="chat-messages"></div>
+                <div id="chat-input-area">
+                    <button id="btn-attach-file" title="画像やファイルを送信">📎</button>
+                    <input type="file" id="input-file" style="display: none;">
+                    <!-- 【変更】inputからtextareaに変更して複数行の改行入力を可能に -->
+                    <textarea id="input-chat" placeholder="相談やメッセージを入力..." rows="1"></textarea>
+                    <button id="btn-send-chat">送信</button>
+                </div>
+            </div>
+
+            <div id="video-gallery" class="wipe-mode">
+                <div id="video-chat-container">
+                    <div class="video-box" id="local-box">
+                        <video id="localVideo" autoplay muted playsinline></video>
+                        <div class="user-status"><span id="local-user-name">{{ username }}</span></div>
+                    </div>
+                    <div class="video-box" id="remote-box">
+                        <video id="remoteVideo" autoplay playsinline></video>
+                        <div class="user-status"><span id="remote-user-name">待機中...</span></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="layer-panel" class="hidden">
+                <div class="panel-header">レイヤー構成</div>
+                <button id="btn-add-layer">➕ 新規レイヤー追加</button>
+                <div id="layer-list"></div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script type="module" src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
