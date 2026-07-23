@@ -1,9 +1,9 @@
 'use strict';
 
 const socket = io({
-    transports: ['polling', 'websocket'],
+    transports: ['websocket', 'polling'],
     reconnectionAttempts: 5,
-    reconnectionDelay: 1000
+    reconnectionDelay: 2000
 });
 
 let currentUsername = '';
@@ -32,8 +32,8 @@ function initWhiteboard() {
     const canvasContainer = document.getElementById('canvas-container');
     const workspace = document.getElementById('workspace');
     
-    const boardWidth = 12000;
-    const boardHeight = 12000;
+    const boardWidth = 8000;
+    const boardHeight = 8000;
     
     bgCanvas.width = boardWidth;
     bgCanvas.height = boardHeight;
@@ -346,7 +346,6 @@ function initWhiteboard() {
             const dt = Math.max(1, pCurr.time - pPrev.time);
             let speed = dist / dt;
             speed = Math.min(4.0, Math.max(0.1, speed));
-            // Gペンのガタガタ感を排除するため、係数を洗練しスムーズな補間を適用
             let targetGSize = Math.max(1.0, penSize * (1.8 - speed * 0.4));
             currentWidth = currentWidth + (targetGSize - currentWidth) * 0.15;
         } else {
@@ -531,7 +530,7 @@ function setupSpeakerGate(stream) {
                 }, 1000); 
             }
         }
-    }, 100);
+    }, 150); // インターバルを150msに拡大してCPU負荷を大幅軽減
 }
 
 function initChat() {

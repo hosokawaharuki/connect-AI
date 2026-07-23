@@ -36,9 +36,8 @@ def start_ollama_automatically():
             stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         )
-        print("🤖 Ollama (qwen2.5:1.5b) をバックグラウンドで自動起動しました。")
     except Exception as e:
-        print(f"⚠️ Ollamaの自動起動に失敗しました: {e}")
+        pass
 
 openai_api_key = os.environ.get('OPENAI_API_KEY')
 
@@ -183,8 +182,8 @@ def async_ai_task(prompt, app_instance, room):
                     snippets = [r.get('content', '') for r in results if r.get('content')]
                     if snippets:
                         search_context = "\n".join(snippets[:2])
-                except Exception as search_err:
-                    print(f"⚠️ Tavily検索スキップ: {search_err}")
+                except Exception:
+                    pass
 
             full_prompt = f"質問: {prompt}\n\n参考情報:\n{search_context if search_context else 'なし'}\n\n指示: 上記の質問に対し、関係のない情報を混ぜず、簡潔かつ正確に日本語で答えてください。"
 
@@ -196,11 +195,11 @@ def async_ai_task(prompt, app_instance, room):
                 ],
                 max_tokens=150,
                 temperature=0.1,
-                timeout=30
+                timeout=25
             )
             answer_text = response.choices[0].message.content.strip()
         except Exception as e:
-            answer_text = f"⚠️ AI応答エラー: {str(e)}"
+            answer_text = f"⚠️ AI応答エラー (APIキーや環境をご確認ください): {str(e)}"
         
         with app_instance.app_context():
             new_msg = ChatMessage(user_id=1, message=answer_text, read_count=1, is_deleted=False)
