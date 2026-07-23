@@ -64,8 +64,9 @@ button.active { background: #007bff; font-weight: bold; }
 #workspace { flex: 1; background: #121212; position: relative; overflow: hidden; cursor: grab; }
 #workspace:active { cursor: grabbing; }
 
+/* 【修正】無限キャンパスの起点とコンテナサイズを拡大 */
 #canvas-container {
-    position: absolute; width: 10000px; height: 10000px; top: -3500px; left: -3500px;
+    position: absolute; width: 16000px; height: 16000px; top: 0; left: 0;
     transform-origin: 0 0; pointer-events: auto;
 }
 #layers-stack, #layer-bg { position: absolute; width: 100%; height: 100%; top: 0; left: 0; pointer-events: auto; }
@@ -84,7 +85,6 @@ button.active { background: #007bff; font-weight: bold; }
 #btn-attach-file { background: transparent; border: none; color: #888; font-size: 18px; cursor: pointer; padding: 0 4px; transition: 0.2s; height: 36px; display: flex; align-items: center; }
 #btn-attach-file:hover { color: #fff; transform: scale(1.1); }
 
-/* 【変更】textarea向けのスタイル調整（自動高さ調整、スクロール対応） */
 #input-chat { 
     flex: 1; 
     padding: 8px 12px; 

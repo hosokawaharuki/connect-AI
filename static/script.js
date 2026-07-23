@@ -31,9 +31,9 @@ function initWhiteboard() {
     const canvasContainer = document.getElementById('canvas-container');
     const workspace = document.getElementById('workspace');
     
-    // 軽量化とパフォーマンス向上のため適度なボードサイズに設定
-    const boardWidth = 6000;
-    const boardHeight = 6000;
+    // 無限キャンパスとして十分に広く、かつ軽量なサイズ
+    const boardWidth = 16000;
+    const boardHeight = 16000;
     
     bgCanvas.width = boardWidth;
     bgCanvas.height = boardHeight;
@@ -70,9 +70,10 @@ function initWhiteboard() {
     let undoStack = [];
     let redoStack = [];
 
+    // 初期表示でキャンパス中央が画面中央に来るようにオフセット調整
     let scale = 1.0;
-    let panX = 0;
-    let panY = 0;
+    let panX = (workspace.clientWidth - boardWidth) / 2;
+    let panY = (workspace.clientHeight - boardHeight) / 2;
 
     function updateTransform() {
         requestAnimationFrame(() => {
@@ -81,19 +82,27 @@ function initWhiteboard() {
             document.getElementById('zoom-display').innerText = Math.round(scale * 100) + '%';
         });
     }
+    updateTransform();
 
-    document.getElementById('btn-zoom-in').onclick = () => { scale = Math.min(8.0, scale * 1.2); updateTransform(); };
-    document.getElementById('btn-zoom-out').onclick = () => { scale = Math.max(0.1, scale / 1.2); updateTransform(); };
-    document.getElementById('btn-reset-view').onclick = () => { scale = 1.0; panX = 0; panY = 0; updateTransform(); };
+    document.getElementById('btn-zoom-in').onclick = () => { scale = Math.min(10.0, scale * 1.25); updateTransform(); };
+    document.getElementById('btn-zoom-out').onclick = () => { scale = Math.max(0.05, scale / 1.25); updateTransform(); };
+    document.getElementById('btn-reset-view').onclick = () => { 
+        scale = 1.0; 
+        panX = (workspace.clientWidth - boardWidth) / 2;
+        panY = (workspace.clientHeight - boardHeight) / 2;
+        updateTransform(); 
+    };
 
-    // 滑らかなホイールズーム
+    // マウスカーソル中心の滑らかなホイールズーム
     workspace.addEventListener('wheel', (e) => {
         e.preventDefault();
         const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
-        const newScale = Math.min(8.0, Math.max(0.1, scale * zoomFactor));
+        const newScale = Math.min(10.0, Math.max(0.05, scale * zoomFactor));
+        
         const rect = workspace.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
+
         panX = mouseX - (mouseX - panX) * (newScale / scale);
         panY = mouseY - (mouseY - panY) * (newScale / scale);
         scale = newScale;
@@ -146,7 +155,6 @@ function initWhiteboard() {
         updateLayerUI();
     }
 
-    // レイヤー削除機能の追加
     window.deleteLayer = function(id) {
         if (layers.length <= 1) {
             alert('すべてのレイヤーを削除することはできません。');
@@ -200,7 +208,7 @@ function initWhiteboard() {
     function saveState() {
         const state = layers.map(l => l.canvas.toDataURL());
         undoStack.push(state);
-        if (undoStack.length > 20) undoStack.shift(); // メモリ効率化のため履歴数を制限
+        if (undoStack.length > 15) undoStack.shift();
         redoStack = [];
     }
 
@@ -236,7 +244,6 @@ function initWhiteboard() {
     let penSize = 8.0;
     let penOpacity = 1.0;
     let isEraser = false;
-    let currentWidth = 8.0;
     let smoothedX = 0;
     let smoothedY = 0;
 
@@ -256,16 +263,24 @@ function initWhiteboard() {
 
     const firstCanvas = layers[0].canvas;
 
+    // 【座標ズレの完全修復】 transform（panX, panY, scale）を正確に逆算してキャンバス上の論理座標に変換
+    function getCanvasPoint(e) {
+        const rect = canvasContainer.getBoundingClientRect();
+        return {
+            x: (e.clientX - rect.left) / scale,
+            y: (e.clientY - rect.top) / scale
+        };
+    }
+
     firstCanvas.addEventListener('mousedown', (e) => {
         if (e.button !== 0 || isPanning) return;
         drawing = true;
-        const rect = firstCanvas.getBoundingClientRect();
+        const pt = getCanvasPoint(e);
         
-        smoothedX = (e.clientX - rect.left) / scale;
-        smoothedY = (e.clientY - rect.top) / scale;
+        smoothedX = pt.x;
+        smoothedY = pt.y;
         
-        points = [{ x: smoothedX, y: smoothedY, time: Date.now() }];
-        currentWidth = penSize;
+        points = [{ x: smoothedX, y: smoothedY }];
 
         localDraftCtx.clearRect(0, 0, boardWidth, boardHeight);
         localDraftCanvas.style.opacity = penOpacity;
@@ -293,9 +308,9 @@ function initWhiteboard() {
 
     firstCanvas.addEventListener('mousemove', (e) => {
         if (!drawing) return;
-        const rect = firstCanvas.getBoundingClientRect();
-        let rawX = (e.clientX - rect.left) / scale;
-        let rawY = (e.clientY - rect.top) / scale;
+        const pt = getCanvasPoint(e);
+        let rawX = pt.x;
+        let rawY = pt.y;
 
         if (document.getElementById('ai-stroke-toggle').checked) {
             smoothedX += (rawX - smoothedX) * 0.4;
@@ -308,7 +323,7 @@ function initWhiteboard() {
         const lastP = points[points.length - 1];
         if (lastP && Math.hypot(smoothedX - lastP.x, smoothedY - lastP.y) < 0.5) return;
 
-        points.push({ x: smoothedX, y: smoothedY, time: Date.now() });
+        points.push({ x: smoothedX, y: smoothedY });
         if (points.length < 2) return;
 
         const pPrev = points[points.length - 2];
@@ -550,7 +565,7 @@ function initChat() {
         inputFile.value = ''; 
     };
 
-    // AIアドバイザー呼び出し機能の修復
+    // AIアドバイザー呼び出し機能（タイムアウトを90秒に延長し余裕を持たせる）
     document.getElementById('btn-ai-consult').onclick = () => {
         let txt = chatInput.value.trim();
         if (!txt) {
@@ -580,15 +595,15 @@ function initChat() {
                     <div class="chat-msg other">
                         <span class="chat-sender">🤖 AIアドバイザー</span>
                         <div class="chat-bubble-container">
-                            <div class="chat-bubble" style="color: #ff9800;">応答に時間がかかっています。ネットワーク環境をご確認ください。</div>
+                            <div class="chat-bubble" style="color: #ff9800;">処理に時間がかかっていますが、まもなく応答します...</div>
                         </div>
                     </div>`;
                 chatMsgs.scrollTop = chatMsgs.scrollHeight;
             }
-        }, 45000);
+        }, 90000);
     };
 
-    // グループチャットのメッセージ未表示バグを完全に修正（受信時確実描画）
+    // グループチャットのメッセージ未表示バグを完全に修正
     socket.on('receive_message', (data) => {
         const thinkingIndicator = document.getElementById('ai-thinking-indicator');
         if (thinkingIndicator && data.user.includes('AI')) {
