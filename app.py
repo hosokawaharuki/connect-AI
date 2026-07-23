@@ -199,7 +199,8 @@ def async_ai_task(prompt, app_instance, room):
             )
             answer_text = response.choices[0].message.content.strip()
         except Exception as e:
-            answer_text = f"⚠️ AI応答エラー (APIキーや環境をご確認ください): {str(e)}"
+            # 万が一ローカルAIが未起動などで接続失敗した場合は分かりやすいフォールバックを返す
+            answer_text = f"⚠️ AIアドバイザーの応答を取得できませんでした（ローカルAI/Ollamaが起動していないか、APIキーの設定をご確認ください）。詳細: {str(e)}"
         
         with app_instance.app_context():
             new_msg = ChatMessage(user_id=1, message=answer_text, read_count=1, is_deleted=False)
@@ -218,13 +219,6 @@ def async_ai_task(prompt, app_instance, room):
 def on_ask_ai(data):
     prompt = data.get('prompt', 'ブレインストーミングの提案をしてください。')
     room = data.get('room', 'main_room')
-    
-    socketio.emit('receive_message', {
-        'id': 0,
-        'user': '🤖 AIアドバイザー',
-        'message': f'「{prompt}」について思考中...',
-        'read_count': 1
-    }, room=room)
     
     thread = threading.Thread(target=async_ai_task, args=(prompt, app, room))
     thread.daemon = True

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>conect AI</title>
+    <link rel="icon" href="data:,">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
     <script src="{{ url_for('static', filename='line-audio-optimizer.js') }}"></script>
@@ -114,7 +115,7 @@
                 <div id="chat-input-area">
                     <button id="btn-attach-file" title="画像やファイルを送信">📎</button>
                     <input type="file" id="input-file" style="display: none;">
-                    <textarea id="input-chat" placeholder="相談やメッセージを入力..." rows="1" autocomplete="off"></textarea>
+                    <textarea id="input-chat" placeholder="相談やメッセージを入力 (Enterで送信)..." rows="1" autocomplete="off"></textarea>
                     <button id="btn-send-chat">送信</button>
                 </div>
             </div>
