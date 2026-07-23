@@ -139,8 +139,8 @@
             </div>
         </div>
     </div>
-    <!-- 【修正】外部CDNではなく、Flask-SocketIOサーバーが自動配信するスクリプトに変更 -->
-    <script src="/socket.io/socket.io.js"></script>
+    <!-- 互換性のあるSocket.IO v4.7.2 CDNに変更 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <script type="module" src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
