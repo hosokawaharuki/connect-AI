@@ -32,9 +32,8 @@ function initWhiteboard() {
     const canvasContainer = document.getElementById('canvas-container');
     const workspace = document.getElementById('workspace');
     
-    // 処理の軽量化とメモリ最適化のため最適なボードサイズを設定
-    const boardWidth = 8000;
-    const boardHeight = 8000;
+    const boardWidth = 12000;
+    const boardHeight = 12000;
     
     bgCanvas.width = boardWidth;
     bgCanvas.height = boardHeight;
@@ -202,7 +201,7 @@ function initWhiteboard() {
     function saveState() {
         const state = layers.map(l => l.canvas.toDataURL());
         undoStack.push(state);
-        if (undoStack.length > 10) undoStack.shift(); // 軽量化のため履歴上限を削減
+        if (undoStack.length > 10) undoStack.shift();
         redoStack = [];
     }
 
@@ -260,7 +259,6 @@ function initWhiteboard() {
 
     const firstCanvas = layers[0].canvas;
 
-    // 座標ズレを完全に防ぐ正確なマッピング
     function getCanvasCoords(e) {
         const rect = firstCanvas.getBoundingClientRect();
         return {
@@ -283,16 +281,22 @@ function initWhiteboard() {
         localDraftCtx.clearRect(0, 0, boardWidth, boardHeight);
         localDraftCanvas.style.opacity = penOpacity;
         
-        socket.emit('draw', { state: 'start', user: currentUsername, opacity: penOpacity, room: currentRoomId });
+        socket.emit('draw', { state: 'start', user: currentUsername, opacity: penOpacity, room: currentRoomId, eraser: isEraser });
     });
 
     window.addEventListener('mouseup', () => {
         if (drawing) {
             const ctx = getActiveCtx();
             if (ctx) {
-                ctx.globalAlpha = isEraser ? 1.0 : penOpacity;
-                ctx.drawImage(localDraftCanvas, 0, 0);
-                ctx.globalAlpha = 1.0;
+                if (isEraser) {
+                    ctx.globalCompositeOperation = 'destination-out';
+                    ctx.drawImage(localDraftCanvas, 0, 0);
+                    ctx.globalCompositeOperation = 'source-over';
+                } else {
+                    ctx.globalAlpha = penOpacity;
+                    ctx.drawImage(localDraftCanvas, 0, 0);
+                    ctx.globalAlpha = 1.0;
+                }
             }
             localDraftCtx.clearRect(0, 0, boardWidth, boardHeight);
             
@@ -327,9 +331,14 @@ function initWhiteboard() {
         const pPrev = points[points.length - 2];
         const pCurr = points[points.length - 1];
 
-        localDraftCtx.strokeStyle = isEraser ? '#ffffff' : penColor;
-        
-        // Gペン（速度に応じた強弱の筆圧表現）
+        if (isEraser) {
+            localDraftCtx.globalCompositeOperation = 'destination-out';
+            localDraftCtx.strokeStyle = 'rgba(0,0,0,1)';
+        } else {
+            localDraftCtx.globalCompositeOperation = 'source-over';
+            localDraftCtx.strokeStyle = penColor;
+        }
+
         const penType = document.getElementById('pen-type').value;
         let activeSize = penSize;
         if (penType === 'gpen' && !isEraser) {
@@ -341,12 +350,6 @@ function initWhiteboard() {
 
         currentWidth = currentWidth + (activeSize - currentWidth) * 0.2;
         localDraftCtx.lineWidth = currentWidth;
-
-        if (isEraser) {
-            localDraftCtx.globalCompositeOperation = 'destination-out';
-        } else {
-            localDraftCtx.globalCompositeOperation = 'source-over';
-        }
         localDraftCtx.lineCap = 'round';
         localDraftCtx.lineJoin = 'round';
 
@@ -371,20 +374,25 @@ function initWhiteboard() {
         } else if (data.state === 'end') {
             const remote = getRemoteDraft(data.user);
             const targetLayer = layers.find(l => l.id === data.layerId) || layers[0];
-            targetLayer.ctx.globalAlpha = data.eraser ? 1.0 : data.opacity;
-            if (data.eraser) targetLayer.ctx.globalCompositeOperation = 'destination-out';
-            targetLayer.ctx.drawImage(remote.canvas, 0, 0);
-            targetLayer.ctx.globalAlpha = 1.0;
-            targetLayer.ctx.globalCompositeOperation = 'source-over';
+            if (data.eraser) {
+                targetLayer.ctx.globalCompositeOperation = 'destination-out';
+                targetLayer.ctx.drawImage(remote.canvas, 0, 0);
+                targetLayer.ctx.globalCompositeOperation = 'source-over';
+            } else {
+                targetLayer.ctx.globalAlpha = data.opacity;
+                targetLayer.ctx.drawImage(remote.canvas, 0, 0);
+                targetLayer.ctx.globalAlpha = 1.0;
+            }
             remote.ctx.clearRect(0, 0, boardWidth, boardHeight);
         } else if (data.state === 'draw') {
             const remote = getRemoteDraft(data.user);
-            remote.ctx.strokeStyle = data.color;
             remote.ctx.lineWidth = data.size;
             if (data.eraser) {
                 remote.ctx.globalCompositeOperation = 'destination-out';
+                remote.ctx.strokeStyle = 'rgba(0,0,0,1)';
             } else {
                 remote.ctx.globalCompositeOperation = 'source-over';
+                remote.ctx.strokeStyle = data.color;
             }
             remote.ctx.lineCap = 'round';
             remote.ctx.lineJoin = 'round';
@@ -474,7 +482,6 @@ function setupSignaling() {
     });
 }
 
-// 音声解析のインターバルを延ばして軽量化
 function setupSpeakerGate(stream) {
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const analyser = audioCtx.createAnalyser();
@@ -520,7 +527,7 @@ function setupSpeakerGate(stream) {
                 }, 1000); 
             }
         }
-    }, 100); // 100msに調整してCPU負荷を軽減
+    }, 100);
 }
 
 function initChat() {

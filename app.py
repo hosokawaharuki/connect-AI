@@ -45,14 +45,12 @@ openai_api_key = os.environ.get('OPENAI_API_KEY')
 if openai_api_key:
     client = openai.OpenAI(api_key=openai_api_key)
     AI_MODEL = "gpt-4o-mini"
-    print("✨ OpenAI APIモードで起動します (Model: gpt-4o-mini)")
 else:
     client = openai.OpenAI(
         base_url="http://localhost:11434/v1",
         api_key="ollama"
     )
     AI_MODEL = "qwen2.5:1.5b"
-    print("🤖 ローカルOllamaモードで起動します (Model: qwen2.5:1.5b)")
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -198,13 +196,11 @@ def async_ai_task(prompt, app_instance, room):
                 ],
                 max_tokens=150,
                 temperature=0.1,
-                timeout=25
+                timeout=30
             )
             answer_text = response.choices[0].message.content.strip()
         except Exception as e:
-            # エラー内容をそのまま返すことで、APIキー未設定やクォータエラーなどの原因を特定可能にします
-            answer_text = f"⚠️ AI応答エラーが発生しました: {str(e)}"
-            print(f"AI Error: {e}")
+            answer_text = f"⚠️ AI応答エラー: {str(e)}"
         
         with app_instance.app_context():
             new_msg = ChatMessage(user_id=1, message=answer_text, read_count=1, is_deleted=False)
