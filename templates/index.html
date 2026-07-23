@@ -133,13 +133,14 @@
             </div>
             
             <div id="layer-panel" class="hidden">
-                <div class="panel-header">レイヤー構成</div>
+                <div class="panel-header" style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>レイヤー構成</span>
+                </div>
                 <button id="btn-add-layer">➕ 新規レイヤー追加</button>
                 <div id="layer-list"></div>
             </div>
         </div>
     </div>
-    <!-- 互換性のあるSocket.IO v4.7.2 CDNに変更 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <script type="module" src="{{ url_for('static', filename='script.js') }}"></script>
 </body>

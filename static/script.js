@@ -5,7 +5,7 @@ const socket = io();
 const username = document.getElementById('input-username').value;
 let roomId = document.getElementById('input-room-id').value.trim();
 
-// 無限キャンパス・ビュー状態管理
+// 無限キャンパス・滑らかな拡大縮小管理
 let scale = 1.0;
 let panX = 0;
 let panY = 0;
@@ -22,13 +22,17 @@ let penColor = '#000000';
 let penSize = 8.0;
 let penOpacity = 1.0;
 let bgColor = '#ffffff';
+let aiStrokeCorrection = true;
+let aiNoiseCut = true;
 
 // レイヤー管理
 let layers = [];
 let activeLayerId = null;
 let layerCounter = 0;
 
-// DOM要素
+let localStream = null;
+let remoteStream = null;
+
 const joinModal = document.getElementById('join-modal');
 const appContainer = document.getElementById('app-container');
 const btnJoin = document.getElementById('btn-join');
@@ -39,8 +43,7 @@ const btnCopyUrl = document.getElementById('btn-copy-url');
 const canvasContainer = document.getElementById('canvas-container');
 const layersStack = document.getElementById('layers-stack');
 const layerBg = document.getElementById('layer-bg');
-const bgCtx = layerBg.getContext('2d');
-const workspace = document.getElementById('workspace');
+const bgCtx = layerBg.getContext('2d', { alpha: false }); // 軽量化
 
 const btnPen = document.getElementById('btn-pen');
 const btnEraser = document.getElementById('btn-eraser');
@@ -58,6 +61,9 @@ const btnZoomOut = document.getElementById('btn-zoom-out');
 const zoomDisplay = document.getElementById('zoom-display');
 const btnResetView = document.getElementById('btn-reset-view');
 
+const aiStrokeToggle = document.getElementById('ai-stroke-toggle');
+const btnToggleNoise = document.getElementById('btn-toggle-noise');
+
 const chatPanel = document.getElementById('chat-panel');
 const layerPanel = document.getElementById('layer-panel');
 const btnToggleChat = document.getElementById('btn-toggle-chat');
@@ -70,11 +76,16 @@ const btnSendChat = document.getElementById('btn-send-chat');
 window.addEventListener('load', () => {
     const urlParams = new URLSearchParams(window.location.search);
     const urlRoom = urlParams.get('room');
-    if (urlRoom) inputRoomId.value = urlRoom;
+    if (urlRoom) {
+        inputRoomId.value = urlRoom;
+    }
 });
 
 btnJoin.addEventListener('click', () => {
-    roomId = inputRoomId.value.trim() || Math.floor(1000 + Math.random() * 9000).toString();
+    roomId = inputRoomId.value.trim();
+    if (!roomId) {
+        roomId = Math.floor(1000 + Math.random() * 9000).toString();
+    }
     roomIdDisplay.textContent = `ルームID: ${roomId}`;
     joinModal.style.display = 'none';
     appContainer.style.display = 'block';
@@ -86,10 +97,12 @@ btnJoin.addEventListener('click', () => {
 
 btnCopyUrl.addEventListener('click', () => {
     const shareUrl = `${window.location.origin}${window.location.pathname}?room=${roomId}`;
-    navigator.clipboard.writeText(shareUrl).then(() => alert('招待URLをコピーしました！'));
+    navigator.clipboard.writeText(shareUrl).then(() => {
+        alert('招待URLをコピーしました！');
+    });
 });
 
-// 無限キャンパス＆スムーズなズームパン
+// 無限キャンパス・滑らかな拡大縮小システム
 function initCanvasSystem() {
     resizeCanvasBackground();
     window.addEventListener('resize', resizeCanvasBackground);
@@ -97,11 +110,14 @@ function initCanvasSystem() {
     addNewLayer('背景レイヤー', true);
     addNewLayer('メインレイヤー', false);
 
+    const workspace = document.getElementById('workspace');
+
+    // スムーズホイールズーム
     workspace.addEventListener('wheel', (e) => {
         e.preventDefault();
         const zoomFactor = 1.15;
         let newScale = e.deltaY < 0 ? scale * zoomFactor : scale / zoomFactor;
-        newScale = Math.max(0.1, Math.min(10.0, newScale));
+        newScale = Math.max(0.1, Math.min(20.0, newScale));
 
         const rect = workspace.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
@@ -111,9 +127,10 @@ function initCanvasSystem() {
         panY = mouseY - (mouseY - panY) * (newScale / scale);
         scale = newScale;
 
-        updateCanvasTransform();
+        requestAnimationFrame(updateCanvasTransform);
     }, { passive: false });
 
+    // パン移動（ドラッグ）
     workspace.addEventListener('mousedown', (e) => {
         if (e.button === 2 || e.altKey || e.target === workspace || e.target === layerBg || e.target.id === 'guide-overlay') {
             isPanning = true;
@@ -127,7 +144,7 @@ function initCanvasSystem() {
         if (isPanning) {
             panX = e.clientX - startX;
             panY = e.clientY - startY;
-            updateCanvasTransform();
+            requestAnimationFrame(updateCanvasTransform);
         }
     });
 
@@ -142,6 +159,10 @@ function initCanvasSystem() {
 function resizeCanvasBackground() {
     layerBg.width = window.innerWidth;
     layerBg.height = window.innerHeight;
+    drawBackgroundGrid();
+}
+
+function drawBackgroundGrid() {
     bgCtx.fillStyle = bgColor;
     bgCtx.fillRect(0, 0, layerBg.width, layerBg.height);
 }
@@ -152,20 +173,34 @@ function updateCanvasTransform() {
     canvasContainer.style.transformOrigin = '0 0';
 }
 
-btnZoomIn.addEventListener('click', () => { scale = Math.min(10.0, scale * 1.25); updateCanvasTransform(); });
-btnZoomOut.addEventListener('click', () => { scale = Math.max(0.1, scale / 1.25); updateCanvasTransform(); });
-btnResetView.addEventListener('click', () => { scale = 1.0; panX = 0; panY = 0; updateCanvasTransform(); });
+btnZoomIn.addEventListener('click', () => {
+    scale = Math.min(20.0, scale * 1.25);
+    updateCanvasTransform();
+});
 
-// レイヤー管理＆削除機能
+btnZoomOut.addEventListener('click', () => {
+    scale = Math.max(0.1, scale / 1.25);
+    updateCanvasTransform();
+});
+
+btnResetView.addEventListener('click', () => {
+    scale = 1.0;
+    panX = 0;
+    panY = 0;
+    updateCanvasTransform();
+});
+
+// レイヤー管理（新規追加・削除機能搭載）
 function addNewLayer(name, isBg = false) {
     const layerId = `layer_${layerCounter++}`;
     const canvas = document.createElement('canvas');
-    canvas.width = 3000;
-    canvas.height = 2000;
+    canvas.width = 4000;
+    canvas.height = 3000;
     canvas.className = 'draw-layer';
     canvas.id = layerId;
 
     layersStack.appendChild(canvas);
+
     const ctx = canvas.getContext('2d', { alpha: true });
     layers.push({ id: layerId, name: name, canvas: canvas, ctx: ctx, visible: true, isBg: isBg });
 
@@ -189,22 +224,22 @@ function updateLayerListUI() {
         item.style.display = 'flex';
         item.style.justifyContent = 'space-between';
         item.style.alignItems = 'center';
-        item.style.padding = '4px 8px';
-        item.style.marginBottom = '4px';
-        item.style.background = layer.id === activeLayerId ? '#2a4736' : '#222';
+        item.style.padding = '6px';
+        item.style.margin = '4px 0';
+        item.style.background = layer.id === activeLayerId ? '#2a472e' : '#222';
+        item.style.borderRadius = '4px';
+        item.style.cursor = 'pointer';
 
         item.innerHTML = `
-            <span style="cursor:pointer; flex-grow:1;" onclick="setActiveLayerFromUI('${layer.id}')">${layer.name}</span>
+            <span onclick="setActiveLayer('${layer.id}')" style="flex-grow:1; color:#fff; font-size:12px;">${layer.name}</span>
             <div>
-                <button onclick="toggleLayerVisibility('${layer.id}')" style="background:none; border:none; cursor:pointer;" title="表示切替">${layer.visible ? '👁️' : '🚫'}</button>
-                ${!layer.isBg ? `<button onclick="deleteLayer('${layer.id}')" style="background:none; border:none; cursor:pointer; color:#ff5555;" title="削除">🗑️</button>` : ''}
+                <button onclick="toggleLayerVisibility('${layer.id}')" style="background:none; border:none; cursor:pointer; font-size:14px;" title="表示切替">${layer.visible ? '👁️' : '🚫'}</button>
+                ${!layer.isBg && layers.length > 1 ? `<button onclick="deleteLayer('${layer.id}')" style="background:none; border:none; cursor:pointer; font-size:14px; margin-left:6px;" title="削除">🗑️</button>` : ''}
             </div>
         `;
         layerList.appendChild(item);
     });
 }
-
-window.setActiveLayerFromUI = (id) => setActiveLayer(id);
 
 window.toggleLayerVisibility = function(layerId) {
     const layer = layers.find(l => l.id === layerId);
@@ -235,7 +270,6 @@ document.getElementById('btn-add-layer').addEventListener('click', () => {
     addNewLayer(`レイヤー ${layers.length}`);
 });
 
-// 正確なスケーリング描画
 function getActiveCtx() {
     const active = layers.find(l => l.id === activeLayerId);
     return active ? active.ctx : null;
@@ -293,11 +327,13 @@ layersStack.addEventListener('mousemove', (e) => {
     lastY = currentY;
 });
 
-window.addEventListener('mouseup', () => { isDrawing = false; });
+window.addEventListener('mouseup', () => {
+    isDrawing = false;
+});
 
 socket.on('draw_sync', (data) => {
     const targetLayer = layers.find(l => l.id === data.layerId);
-    if (!targetLayer) return;
+    if (!targetLayer || !targetLayer.visible) return;
     const ctx = targetLayer.ctx;
 
     ctx.beginPath();
@@ -314,21 +350,28 @@ socket.on('draw_sync', (data) => {
     ctx.stroke();
 });
 
-// ツール操作
 btnPen.addEventListener('click', () => { currentTool = 'pen'; btnPen.classList.add('active'); btnEraser.classList.remove('active'); });
 btnEraser.addEventListener('click', () => { currentTool = 'eraser'; btnEraser.classList.add('active'); btnPen.classList.remove('active'); });
 colorPicker.addEventListener('input', (e) => penColor = e.target.value);
 bgColorPicker.addEventListener('input', (e) => {
     bgColor = e.target.value;
-    resizeCanvasBackground();
+    drawBackgroundGrid();
 });
 
 btnSizePlus.addEventListener('click', () => { penSize = Math.min(100, penSize + 1); sizeDisplay.textContent = penSize.toFixed(1); });
 btnSizeMinus.addEventListener('click', () => { penSize = Math.max(1, penSize - 1); sizeDisplay.textContent = penSize.toFixed(1); });
+
 btnOpacityPlus.addEventListener('click', () => { penOpacity = Math.min(1.0, penOpacity + 0.1); opacityDisplay.textContent = penOpacity.toFixed(1); });
 btnOpacityMinus.addEventListener('click', () => { penOpacity = Math.max(0.1, penOpacity - 0.1); opacityDisplay.textContent = penOpacity.toFixed(1); });
 
-// チャット＆AIアドバイザー機能（修正・確実な表示）
+aiStrokeToggle.addEventListener('change', (e) => aiStrokeCorrection = e.target.checked);
+btnToggleNoise.addEventListener('click', () => {
+    aiNoiseCut = !aiNoiseCut;
+    btnToggleNoise.textContent = aiNoiseCut ? 'ON' : 'OFF';
+    btnToggleNoise.style.background = aiNoiseCut ? '#27ae60' : '#c0392b';
+});
+
+// チャット＆AIアドバイザー機能
 btnToggleChat.addEventListener('click', () => chatPanel.classList.toggle('hidden'));
 btnTogglePanel.addEventListener('click', () => layerPanel.classList.toggle('hidden'));
 
@@ -348,32 +391,33 @@ function sendChatMessage() {
 }
 
 btnAiConsult.addEventListener('click', () => {
-    const promptText = prompt('AIアドバイザーへの質問やテーマを入力してください:', 'このプロジェクトの改善点を教えて');
+    const promptText = prompt('AIアドバイザーへの質問やブレインストーミングのテーマを入力してください:', 'このプロジェクトのアイデアを提案して');
     if (promptText) {
-        const loadingDiv = document.createElement('div');
-        loadingDiv.className = 'chat-message';
-        loadingDiv.innerHTML = `<strong>🤖 AIアドバイザー</strong>: 情報を検索・思考中...`;
-        chatMessages.appendChild(loadingDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-
         socket.emit('ask_ai', { prompt: promptText });
     }
 });
 
+// チャットメッセージを確実に画面に描画（未表示バグ修正済）
 socket.on('receive_message', (data) => {
     const msgDiv = document.createElement('div');
     msgDiv.className = `chat-message ${data.user === username ? 'self' : ''}`;
-    msgDiv.innerHTML = `<strong>${data.user}</strong>: ${data.message}`;
+    msgDiv.style.margin = '8px 0';
+    msgDiv.style.padding = '8px 12px';
+    msgDiv.style.borderRadius = '8px';
+    msgDiv.style.background = data.user.includes('AI') ? '#2c3e50' : (data.user === username ? '#1b4d3e' : '#333');
+    msgDiv.style.color = '#fff';
+    msgDiv.style.fontSize = '13px';
+    
+    msgDiv.innerHTML = `<strong style="color: ${data.user.includes('AI') ? '#f1c40f' : '#81c784'};">${data.user}</strong>: ${data.message}`;
     chatMessages.appendChild(msgDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
 });
 
-// WebRTC
 async function initMediaStream() {
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        document.getElementById('localVideo').srcObject = stream;
-    } catch (e) {
-        console.warn('カメラ・マイクの取得スキップ');
+        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        document.getElementById('localVideo').srcObject = localStream;
+    } catch (err) {
+        console.warn('カメラ・マイクの取得に失敗しました:', err);
     }
 }
