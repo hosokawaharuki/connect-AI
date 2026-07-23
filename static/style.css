@@ -64,9 +64,9 @@ button.active { background: #007bff; font-weight: bold; }
 #workspace { flex: 1; background: #121212; position: relative; overflow: hidden; cursor: grab; }
 #workspace:active { cursor: grabbing; }
 
-/* 【修正】無限キャンパスの起点とコンテナサイズを拡大 */
+/* 縮小しても有限に見えないよう無限キャンパス領域を広大に確保 */
 #canvas-container {
-    position: absolute; width: 16000px; height: 16000px; top: 0; left: 0;
+    position: absolute; width: 12000px; height: 12000px; top: 0; left: 0;
     transform-origin: 0 0; pointer-events: auto;
 }
 #layers-stack, #layer-bg { position: absolute; width: 100%; height: 100%; top: 0; left: 0; pointer-events: auto; }

@@ -115,19 +115,23 @@ def on_join(data):
 
 @socketio.on('draw')
 def on_draw(data):
-    emit('draw_sync', data, broadcast=True, include_self=False)
+    room = data.get('room', 'main_room')
+    emit('draw_sync', data, to=room, include_self=False)
 
 @socketio.on('webrtc_offer')
 def on_offer(data):
-    emit('webrtc_offer', data, broadcast=True, include_self=False)
+    room = data.get('room', 'main_room')
+    emit('webrtc_offer', data, to=room, include_self=False)
 
 @socketio.on('webrtc_answer')
 def on_answer(data):
-    emit('webrtc_answer', data, broadcast=True, include_self=False)
+    room = data.get('room', 'main_room')
+    emit('webrtc_answer', data, to=room, include_self=False)
 
 @socketio.on('webrtc_ice_candidate')
 def on_ice_candidate(data):
-    emit('webrtc_ice_candidate', data, broadcast=True, include_self=False)
+    room = data.get('room', 'main_room')
+    emit('webrtc_ice_candidate', data, to=room, include_self=False)
 
 @socketio.on('send_message')
 def on_message(data):
@@ -135,6 +139,7 @@ def on_message(data):
     file_data = data.get('file', None)
     file_type = data.get('file_type', '')
     file_name = data.get('file_name', 'file')
+    room = data.get('room', 'main_room')
     
     display_msg = msg if msg else f"[ファイル送信: {file_name}]"
     
@@ -145,7 +150,7 @@ def on_message(data):
         msg_id = new_msg.id
         username = current_user.username
     
-    emit('receive_message', {
+    socketio.emit('receive_message', {
         'id': msg_id,
         'user': username, 
         'message': msg, 
@@ -153,19 +158,20 @@ def on_message(data):
         'file_type': file_type,
         'file_name': file_name,
         'read_count': 1
-    }, broadcast=True)
+    }, room=room)
 
 @socketio.on('delete_message')
 def on_delete_message(data):
     msg_id = data.get('id')
+    room = data.get('room', 'main_room')
     with app.app_context():
         msg = ChatMessage.query.get(msg_id)
         if msg:
             msg.is_deleted = True
             db.session.commit()
-    emit('message_deleted', {'id': msg_id}, broadcast=True)
+    socketio.emit('message_deleted', {'id': msg_id}, room=room)
 
-def async_ai_task(prompt, app_instance):
+def async_ai_task(prompt, app_instance, room):
     with app_instance.app_context():
         try:
             search_context = ""
@@ -207,19 +213,21 @@ def async_ai_task(prompt, app_instance):
             'user': '🤖 AIアドバイザー', 
             'message': answer_text,
             'read_count': 1
-        })
+        }, room=room)
 
 @socketio.on('ask_ai')
 def on_ask_ai(data):
     prompt = data.get('prompt', 'ブレインストーミングの提案をしてください。')
+    room = data.get('room', 'main_room')
+    
     socketio.emit('receive_message', {
         'id': 0,
         'user': '🤖 AIアドバイザー',
         'message': f'「{prompt}」について情報収集・思考中...',
         'read_count': 1
-    }, broadcast=True)
+    }, room=room)
     
-    thread = threading.Thread(target=async_ai_task, args=(prompt, app))
+    thread = threading.Thread(target=async_ai_task, args=(prompt, app, room))
     thread.daemon = True
     thread.start()
 

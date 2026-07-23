@@ -7,18 +7,19 @@ const socket = io({
 });
 
 let currentUsername = '';
+let currentRoomId = '';
 
 document.getElementById('btn-join').onclick = () => {
     currentUsername = document.getElementById('input-username').value;
-    let roomId = document.getElementById('input-room-id').value.trim();
-    if (!roomId) {
-        roomId = 'room_' + Math.random().toString(36).substring(2, 9);
+    currentRoomId = document.getElementById('input-room-id').value.trim();
+    if (!currentRoomId) {
+        currentRoomId = 'room_' + Math.random().toString(36).substring(2, 9);
     }
     document.getElementById('join-modal').style.display = 'none';
     document.getElementById('app-container').style.display = 'flex';
-    document.getElementById('room-id-display').innerText = 'ルームID: ' + roomId;
+    document.getElementById('room-id-display').innerText = 'ルームID: ' + currentRoomId;
     
-    socket.emit('join', { room: roomId, username: currentUsername });
+    socket.emit('join', { room: currentRoomId, username: currentUsername });
     initWhiteboard();
     initWebRTC();
     initChat();
@@ -31,9 +32,9 @@ function initWhiteboard() {
     const canvasContainer = document.getElementById('canvas-container');
     const workspace = document.getElementById('workspace');
     
-    // 無限キャンパスとして十分に広く、かつ軽量なサイズ
-    const boardWidth = 16000;
-    const boardHeight = 16000;
+    // 無限キャンパス用により広大なボードサイズを採用しつつ描画負荷を軽減
+    const boardWidth = 12000;
+    const boardHeight = 12000;
     
     bgCanvas.width = boardWidth;
     bgCanvas.height = boardHeight;
@@ -70,10 +71,9 @@ function initWhiteboard() {
     let undoStack = [];
     let redoStack = [];
 
-    // 初期表示でキャンパス中央が画面中央に来るようにオフセット調整
     let scale = 1.0;
-    let panX = (workspace.clientWidth - boardWidth) / 2;
-    let panY = (workspace.clientHeight - boardHeight) / 2;
+    let panX = 0;
+    let panY = 0;
 
     function updateTransform() {
         requestAnimationFrame(() => {
@@ -82,27 +82,19 @@ function initWhiteboard() {
             document.getElementById('zoom-display').innerText = Math.round(scale * 100) + '%';
         });
     }
-    updateTransform();
 
-    document.getElementById('btn-zoom-in').onclick = () => { scale = Math.min(10.0, scale * 1.25); updateTransform(); };
-    document.getElementById('btn-zoom-out').onclick = () => { scale = Math.max(0.05, scale / 1.25); updateTransform(); };
-    document.getElementById('btn-reset-view').onclick = () => { 
-        scale = 1.0; 
-        panX = (workspace.clientWidth - boardWidth) / 2;
-        panY = (workspace.clientHeight - boardHeight) / 2;
-        updateTransform(); 
-    };
+    document.getElementById('btn-zoom-in').onclick = () => { scale = Math.min(10.0, scale * 1.2); updateTransform(); };
+    document.getElementById('btn-zoom-out').onclick = () => { scale = Math.max(0.05, scale / 1.2); updateTransform(); };
+    document.getElementById('btn-reset-view').onclick = () => { scale = 1.0; panX = 0; panY = 0; updateTransform(); };
 
-    // マウスカーソル中心の滑らかなホイールズーム
+    // スムーズなホイールズーム（無限キャンパス対応）
     workspace.addEventListener('wheel', (e) => {
         e.preventDefault();
         const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
         const newScale = Math.min(10.0, Math.max(0.05, scale * zoomFactor));
-        
         const rect = workspace.getBoundingClientRect();
         const mouseX = e.clientX - rect.left;
         const mouseY = e.clientY - rect.top;
-
         panX = mouseX - (mouseX - panX) * (newScale / scale);
         panY = mouseY - (mouseY - panY) * (newScale / scale);
         scale = newScale;
@@ -208,7 +200,7 @@ function initWhiteboard() {
     function saveState() {
         const state = layers.map(l => l.canvas.toDataURL());
         undoStack.push(state);
-        if (undoStack.length > 15) undoStack.shift();
+        if (undoStack.length > 15) undoStack.shift(); // メモリ効率化
         redoStack = [];
     }
 
@@ -244,6 +236,7 @@ function initWhiteboard() {
     let penSize = 8.0;
     let penOpacity = 1.0;
     let isEraser = false;
+    let currentWidth = 8.0;
     let smoothedX = 0;
     let smoothedY = 0;
 
@@ -263,9 +256,9 @@ function initWhiteboard() {
 
     const firstCanvas = layers[0].canvas;
 
-    // 【座標ズレの完全修復】 transform（panX, panY, scale）を正確に逆算してキャンバス上の論理座標に変換
-    function getCanvasPoint(e) {
-        const rect = canvasContainer.getBoundingClientRect();
+    // 座標ズレを完全に解消する正確な変換関数
+    function getCanvasCoords(e) {
+        const rect = firstCanvas.getBoundingClientRect();
         return {
             x: (e.clientX - rect.left) / scale,
             y: (e.clientY - rect.top) / scale
@@ -275,17 +268,18 @@ function initWhiteboard() {
     firstCanvas.addEventListener('mousedown', (e) => {
         if (e.button !== 0 || isPanning) return;
         drawing = true;
-        const pt = getCanvasPoint(e);
+        const coords = getCanvasCoords(e);
         
-        smoothedX = pt.x;
-        smoothedY = pt.y;
+        smoothedX = coords.x;
+        smoothedY = coords.y;
         
-        points = [{ x: smoothedX, y: smoothedY }];
+        points = [{ x: smoothedX, y: smoothedY, time: Date.now() }];
+        currentWidth = penSize;
 
         localDraftCtx.clearRect(0, 0, boardWidth, boardHeight);
         localDraftCanvas.style.opacity = penOpacity;
         
-        socket.emit('draw', { state: 'start', user: currentUsername, opacity: penOpacity });
+        socket.emit('draw', { state: 'start', user: currentUsername, opacity: penOpacity, room: currentRoomId });
     });
 
     window.addEventListener('mouseup', () => {
@@ -298,7 +292,7 @@ function initWhiteboard() {
             }
             localDraftCtx.clearRect(0, 0, boardWidth, boardHeight);
             
-            socket.emit('draw', { state: 'end', user: currentUsername, layerId: activeLayerId, eraser: isEraser, opacity: penOpacity });
+            socket.emit('draw', { state: 'end', user: currentUsername, layerId: activeLayerId, eraser: isEraser, opacity: penOpacity, room: currentRoomId });
 
             drawing = false;
             points = [];
@@ -308,9 +302,9 @@ function initWhiteboard() {
 
     firstCanvas.addEventListener('mousemove', (e) => {
         if (!drawing) return;
-        const pt = getCanvasPoint(e);
-        let rawX = pt.x;
-        let rawY = pt.y;
+        const coords = getCanvasCoords(e);
+        let rawX = coords.x;
+        let rawY = coords.y;
 
         if (document.getElementById('ai-stroke-toggle').checked) {
             smoothedX += (rawX - smoothedX) * 0.4;
@@ -323,14 +317,27 @@ function initWhiteboard() {
         const lastP = points[points.length - 1];
         if (lastP && Math.hypot(smoothedX - lastP.x, smoothedY - lastP.y) < 0.5) return;
 
-        points.push({ x: smoothedX, y: smoothedY });
+        points.push({ x: smoothedX, y: smoothedY, time: Date.now() });
         if (points.length < 2) return;
 
         const pPrev = points[points.length - 2];
         const pCurr = points[points.length - 1];
 
         localDraftCtx.strokeStyle = isEraser ? '#ffffff' : penColor;
-        localDraftCtx.lineWidth = penSize;
+        
+        // Gペン機能の有効化（移動速度に応じて線の太さに強弱をつける）
+        const penType = document.getElementById('pen-type').value;
+        let activeSize = penSize;
+        if (penType === 'gpen' && !isEraser) {
+            const dist = Math.hypot(pCurr.x - pPrev.x, pCurr.y - pPrev.y);
+            const dt = Math.max(1, pCurr.time - pPrev.time);
+            const speed = dist / dt;
+            activeSize = Math.max(1.0, penSize * Math.min(2.0, Math.max(0.3, 2.0 - speed * 0.6)));
+        }
+
+        currentWidth = currentWidth + (activeSize - currentWidth) * 0.2;
+        localDraftCtx.lineWidth = currentWidth;
+
         if (isEraser) {
             localDraftCtx.globalCompositeOperation = 'destination-out';
         } else {
@@ -348,7 +355,7 @@ function initWhiteboard() {
         socket.emit('draw', { 
             state: 'draw', user: currentUsername,
             x0: pPrev.x, y0: pPrev.y, x1: pCurr.x, y1: pCurr.y, 
-            color: penColor, size: penSize, eraser: isEraser 
+            color: penColor, size: localDraftCtx.lineWidth, eraser: isEraser, room: currentRoomId
         });
     });
 
@@ -432,13 +439,13 @@ function setupSignaling() {
 
     peerConnection.onicecandidate = (event) => {
         if (event.candidate) {
-            socket.emit('webrtc_ice_candidate', { candidate: event.candidate, username: currentUsername });
+            socket.emit('webrtc_ice_candidate', { candidate: event.candidate, username: currentUsername, room: currentRoomId });
         }
     };
 
     peerConnection.createOffer().then(offer => {
         peerConnection.setLocalDescription(offer);
-        socket.emit('webrtc_offer', { sdp: offer, username: currentUsername });
+        socket.emit('webrtc_offer', { sdp: offer, username: currentUsername, room: currentRoomId });
     });
 
     socket.on('webrtc_offer', async (data) => {
@@ -448,7 +455,7 @@ function setupSignaling() {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.sdp));
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
-        socket.emit('webrtc_answer', { sdp: answer, username: currentUsername });
+        socket.emit('webrtc_answer', { sdp: answer, username: currentUsername, room: currentRoomId });
     });
 
     socket.on('webrtc_answer', async (data) => {
@@ -524,7 +531,7 @@ function initChat() {
     const sendMessageAction = () => {
         const txt = chatInput.value.trim();
         if(txt) {
-            socket.emit('send_message', { message: txt, file: null, file_type: '', file_name: '' });
+            socket.emit('send_message', { message: txt, file: null, file_type: '', file_name: '', room: currentRoomId });
             chatInput.value = '';
             chatInput.style.height = 'auto';
         }
@@ -558,21 +565,22 @@ function initChat() {
                 message: `ファイルを送信しました: ${file.name}`, 
                 file: ev.target.result, 
                 file_type: file.type || '',
-                file_name: file.name 
+                file_name: file.name,
+                room: currentRoomId 
             });
         };
         reader.readAsDataURL(file);
         inputFile.value = ''; 
     };
 
-    // AIアドバイザー呼び出し機能（タイムアウトを90秒に延長し余裕を持たせる）
+    // AIアドバイザー呼び出し機能（タイムアウト対応と非同期応答修正）
     document.getElementById('btn-ai-consult').onclick = () => {
         let txt = chatInput.value.trim();
         if (!txt) {
             txt = "こんにちは！ブレインストーミングの提案をしてください。";
         }
 
-        socket.emit('ask_ai', { prompt: txt });
+        socket.emit('ask_ai', { prompt: txt, room: currentRoomId });
         
         chatMsgs.innerHTML += `
             <div class="chat-msg other" id="ai-thinking-indicator">
@@ -595,15 +603,15 @@ function initChat() {
                     <div class="chat-msg other">
                         <span class="chat-sender">🤖 AIアドバイザー</span>
                         <div class="chat-bubble-container">
-                            <div class="chat-bubble" style="color: #ff9800;">処理に時間がかかっていますが、まもなく応答します...</div>
+                            <div class="chat-bubble" style="color: #ff9800;">応答に時間がかかっています。ネットワーク環境をご確認ください。</div>
                         </div>
                     </div>`;
                 chatMsgs.scrollTop = chatMsgs.scrollHeight;
             }
-        }, 90000);
+        }, 55000);
     };
 
-    // グループチャットのメッセージ未表示バグを完全に修正
+    // グループチャットのメッセージ未表示バグの完全修正（受信時確実描画）
     socket.on('receive_message', (data) => {
         const thinkingIndicator = document.getElementById('ai-thinking-indicator');
         if (thinkingIndicator && data.user.includes('AI')) {
@@ -665,7 +673,7 @@ function initChat() {
 
 window.deleteMessage = function(id) {
     if (confirm('このメッセージを削除しますか？')) {
-        socket.emit('delete_message', { id: id });
+        socket.emit('delete_message', { id: id, room: currentRoomId });
     }
 };
 
