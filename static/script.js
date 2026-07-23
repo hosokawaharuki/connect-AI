@@ -32,15 +32,18 @@ function initWhiteboard() {
     const canvasContainer = document.getElementById('canvas-container');
     const workspace = document.getElementById('workspace');
     
-    // 無限キャンパス用により広大なボードサイズを採用しつつ描画負荷を軽減
     const boardWidth = 12000;
     const boardHeight = 12000;
     
     bgCanvas.width = boardWidth;
     bgCanvas.height = boardHeight;
     const bgCtx = bgCanvas.getContext('2d', { alpha: false });
-    bgCtx.fillStyle = '#ffffff';
+    
+    // 初期背景色の適用とワークスペース背景の連動
+    const initialBgColor = document.getElementById('bg-color-picker').value;
+    bgCtx.fillStyle = initialBgColor;
     bgCtx.fillRect(0, 0, boardWidth, boardHeight);
+    workspace.style.backgroundColor = initialBgColor;
 
     const localDraftCanvas = document.createElement('canvas');
     localDraftCanvas.className = 'layer-canvas';
@@ -87,7 +90,6 @@ function initWhiteboard() {
     document.getElementById('btn-zoom-out').onclick = () => { scale = Math.max(0.05, scale / 1.2); updateTransform(); };
     document.getElementById('btn-reset-view').onclick = () => { scale = 1.0; panX = 0; panY = 0; updateTransform(); };
 
-    // スムーズなホイールズーム（無限キャンパス対応）
     workspace.addEventListener('wheel', (e) => {
         e.preventDefault();
         const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
@@ -200,7 +202,7 @@ function initWhiteboard() {
     function saveState() {
         const state = layers.map(l => l.canvas.toDataURL());
         undoStack.push(state);
-        if (undoStack.length > 15) undoStack.shift(); // メモリ効率化
+        if (undoStack.length > 15) undoStack.shift();
         redoStack = [];
     }
 
@@ -241,9 +243,13 @@ function initWhiteboard() {
     let smoothedY = 0;
 
     document.getElementById('color-picker').oninput = (e) => penColor = e.target.value;
+    
+    // 背景色変更時にキャンバス背景およびワークスペース背景を完全に同期
     document.getElementById('bg-color-picker').oninput = (e) => {
-        bgCtx.fillStyle = e.target.value;
+        const newColor = e.target.value;
+        bgCtx.fillStyle = newColor;
         bgCtx.fillRect(0, 0, boardWidth, boardHeight);
+        workspace.style.backgroundColor = newColor;
     };
     
     document.getElementById('btn-size-plus').onclick = () => { penSize = Math.min(50, penSize + 1); document.getElementById('size-display').innerText = penSize.toFixed(1); };
@@ -256,7 +262,6 @@ function initWhiteboard() {
 
     const firstCanvas = layers[0].canvas;
 
-    // 座標ズレを完全に解消する正確な変換関数
     function getCanvasCoords(e) {
         const rect = firstCanvas.getBoundingClientRect();
         return {
@@ -325,7 +330,6 @@ function initWhiteboard() {
 
         localDraftCtx.strokeStyle = isEraser ? '#ffffff' : penColor;
         
-        // Gペン機能の有効化（移動速度に応じて線の太さに強弱をつける）
         const penType = document.getElementById('pen-type').value;
         let activeSize = penSize;
         if (penType === 'gpen' && !isEraser) {
@@ -573,7 +577,6 @@ function initChat() {
         inputFile.value = ''; 
     };
 
-    // AIアドバイザー呼び出し機能（タイムアウト対応と非同期応答修正）
     document.getElementById('btn-ai-consult').onclick = () => {
         let txt = chatInput.value.trim();
         if (!txt) {
@@ -611,7 +614,6 @@ function initChat() {
         }, 55000);
     };
 
-    // グループチャットのメッセージ未表示バグの完全修正（受信時確実描画）
     socket.on('receive_message', (data) => {
         const thinkingIndicator = document.getElementById('ai-thinking-indicator');
         if (thinkingIndicator && data.user.includes('AI')) {
