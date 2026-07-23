@@ -344,11 +344,15 @@ function initWhiteboard() {
         if (penType === 'gpen' && !isEraser) {
             const dist = Math.hypot(pCurr.x - pPrev.x, pCurr.y - pPrev.y);
             const dt = Math.max(1, pCurr.time - pPrev.time);
-            const speed = dist / dt;
-            activeSize = Math.max(1.0, penSize * Math.min(2.0, Math.max(0.3, 2.0 - speed * 0.6)));
+            let speed = dist / dt;
+            speed = Math.min(4.0, Math.max(0.1, speed));
+            // Gペンのガタガタ感を排除するため、係数を洗練しスムーズな補間を適用
+            let targetGSize = Math.max(1.0, penSize * (1.8 - speed * 0.4));
+            currentWidth = currentWidth + (targetGSize - currentWidth) * 0.15;
+        } else {
+            currentWidth = currentWidth + (penSize - currentWidth) * 0.2;
         }
 
-        currentWidth = currentWidth + (activeSize - currentWidth) * 0.2;
         localDraftCtx.lineWidth = currentWidth;
         localDraftCtx.lineCap = 'round';
         localDraftCtx.lineJoin = 'round';
