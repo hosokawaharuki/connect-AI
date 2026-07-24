@@ -203,13 +203,19 @@ def async_ai_task(prompt, app_instance, room):
             )
             answer_text = response.choices[0].message.content.strip()
         except Exception as e:
-            answer_text = f"⚠️ AI応答エラー (APIキーや環境をご確認ください): {str(e)}"
+            answer_text = f"⚠️ AI応答エラー (APIキーやローカルAI環境をご確認ください): {str(e)}"
         
-        with app_instance.app_context():
-            new_msg = ChatMessage(user_id=1, message=answer_text, read_count=1, is_deleted=False)
+        # 修正: エラーで落ちないよう try-except で囲み、安全にDBへ保存
+        try:
+            system_user = User.query.first()
+            uid = system_user.id if system_user else None
+            new_msg = ChatMessage(user_id=uid, message=answer_text, read_count=1, is_deleted=False)
             db.session.add(new_msg)
             db.session.commit()
             msg_id = new_msg.id
+        except Exception:
+            db.session.rollback()
+            msg_id = 9999
 
         socketio.emit('receive_message', {
             'id': msg_id,

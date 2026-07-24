@@ -35,6 +35,10 @@ function initWhiteboard() {
     const boardWidth = 8000;
     const boardHeight = 8000;
     
+    // 【修正】CSSによるサイズズレを防ぎ、キャンバスを実サイズと合わせる
+    canvasContainer.style.width = boardWidth + 'px';
+    canvasContainer.style.height = boardHeight + 'px';
+    
     bgCanvas.width = boardWidth;
     bgCanvas.height = boardHeight;
     const bgCtx = bgCanvas.getContext('2d', { alpha: false });
@@ -259,11 +263,12 @@ function initWhiteboard() {
 
     const firstCanvas = layers[0].canvas;
 
+    // 【修正】描画座標計算を修正（workspace基準にしてパン位置とスケールを考慮）
     function getCanvasCoords(e) {
-        const rect = canvasContainer.getBoundingClientRect();
+        const rect = workspace.getBoundingClientRect();
         return {
-            x: (e.clientX - rect.left) / scale,
-            y: (e.clientY - rect.top) / scale
+            x: (e.clientX - rect.left - panX) / scale,
+            y: (e.clientY - rect.top - panY) / scale
         };
     }
 
