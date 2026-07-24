@@ -109,8 +109,9 @@ def logout():
 @socketio.on('join')
 def on_join(data):
     room = data.get('room', 'main_room')
+    username = data.get('username', 'ゲスト')
     join_room(room)
-    emit('user_joined', {'username': current_user.username}, to=room)
+    emit('user_joined', {'username': username}, to=room)
 
 @socketio.on('draw')
 def on_draw(data):
@@ -139,15 +140,18 @@ def on_message(data):
     file_type = data.get('file_type', '')
     file_name = data.get('file_name', 'file')
     room = data.get('room', 'main_room')
+    username = data.get('username', 'システムユーザー')
     
     display_msg = msg if msg else f"[ファイル送信: {file_name}]"
     
+    user = User.query.filter_by(username=username).first()
+    user_id = user.id if user else (current_user.id if current_user.is_authenticated else 1)
+    
     with app.app_context():
-        new_msg = ChatMessage(user_id=current_user.id, message=display_msg, read_count=1, is_deleted=False)
+        new_msg = ChatMessage(user_id=user_id, message=display_msg, read_count=1, is_deleted=False)
         db.session.add(new_msg)
         db.session.commit()
         msg_id = new_msg.id
-        username = current_user.username
     
     socketio.emit('receive_message', {
         'id': msg_id,
@@ -199,8 +203,7 @@ def async_ai_task(prompt, app_instance, room):
             )
             answer_text = response.choices[0].message.content.strip()
         except Exception as e:
-            # 万が一ローカルAIが未起動などで接続失敗した場合は分かりやすいフォールバックを返す
-            answer_text = f"⚠️ AIアドバイザーの応答を取得できませんでした（ローカルAI/Ollamaが起動していないか、APIキーの設定をご確認ください）。詳細: {str(e)}"
+            answer_text = f"⚠️ AI応答エラー (APIキーや環境をご確認ください): {str(e)}"
         
         with app_instance.app_context():
             new_msg = ChatMessage(user_id=1, message=answer_text, read_count=1, is_deleted=False)
@@ -219,6 +222,13 @@ def async_ai_task(prompt, app_instance, room):
 def on_ask_ai(data):
     prompt = data.get('prompt', 'ブレインストーミングの提案をしてください。')
     room = data.get('room', 'main_room')
+    
+    socketio.emit('receive_message', {
+        'id': 0,
+        'user': '🤖 AIアドバイザー',
+        'message': f'「{prompt}」について思考中...',
+        'read_count': 1
+    }, room=room)
     
     thread = threading.Thread(target=async_ai_task, args=(prompt, app, room))
     thread.daemon = True

@@ -259,14 +259,11 @@ function initWhiteboard() {
 
     const firstCanvas = layers[0].canvas;
 
-    // 修正: パン(panX, panY)とズーム(scale)を完全に考慮した仮想キャンバス上の絶対座標計算
     function getCanvasCoords(e) {
-        const workspaceRect = workspace.getBoundingClientRect();
-        const mouseXInWorkspace = e.clientX - workspaceRect.left;
-        const mouseYInWorkspace = e.clientY - workspaceRect.top;
+        const rect = canvasContainer.getBoundingClientRect();
         return {
-            x: (mouseXInWorkspace - panX) / scale,
-            y: (mouseYInWorkspace - panY) / scale
+            x: (e.clientX - rect.left) / scale,
+            y: (e.clientY - rect.top) / scale
         };
     }
 
@@ -549,7 +546,14 @@ function initChat() {
     const sendMessageAction = () => {
         const txt = chatInput.value.trim();
         if(txt) {
-            socket.emit('send_message', { message: txt, file: null, file_type: '', file_name: '', room: currentRoomId });
+            socket.emit('send_message', { 
+                message: txt, 
+                file: null, 
+                file_type: '', 
+                file_name: '', 
+                room: currentRoomId, 
+                username: currentUsername 
+            });
             chatInput.value = '';
             chatInput.style.height = 'auto';
         }
@@ -562,9 +566,8 @@ function initChat() {
         this.style.height = Math.min(this.scrollHeight, 120) + 'px';
     });
 
-    // 修正: 通常の Enter キーで送信できるようにし、改行は Shift + Enter に変更
     chatInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
             e.preventDefault();
             sendMessageAction();
         }
@@ -585,7 +588,8 @@ function initChat() {
                 file: ev.target.result, 
                 file_type: file.type || '',
                 file_name: file.name,
-                room: currentRoomId 
+                room: currentRoomId,
+                username: currentUsername
             });
         };
         reader.readAsDataURL(file);
@@ -598,15 +602,15 @@ function initChat() {
             txt = "こんにちは！ブレインストーミングの提案をしてください。";
         }
 
-        socket.emit('ask_ai', { prompt: txt, room: currentRoomId });
+        socket.emit('ask_ai', { prompt: txt, room: currentRoomId, username: currentUsername });
         
-        chatMsgs.insertAdjacentHTML('beforeend', `
-            <div class="chat-msg other ai-thinking-msg">
+        chatMsgs.innerHTML += `
+            <div class="chat-msg other" id="ai-thinking-indicator">
                 <span class="chat-sender">🤖 AIアドバイザー</span>
                 <div class="chat-bubble-container">
                     <div class="chat-bubble">情報を検索・思考中...</div>
                 </div>
-            </div>`);
+            </div>`;
         chatMsgs.scrollTop = chatMsgs.scrollHeight;
         chatInput.value = ''; 
         chatInput.style.height = 'auto';
@@ -614,23 +618,25 @@ function initChat() {
         if (aiTimeoutTimer) clearTimeout(aiTimeoutTimer);
         
         aiTimeoutTimer = setTimeout(() => {
-            const indicators = document.querySelectorAll('.ai-thinking-msg');
-            indicators.forEach(el => el.remove());
-            chatMsgs.insertAdjacentHTML('beforeend', `
-                <div class="chat-msg other">
-                    <span class="chat-sender">🤖 AIアドバイザー</span>
-                    <div class="chat-bubble-container">
-                        <div class="chat-bubble" style="color: #ff9800;">応答に時間がかかっています。ローカルAIまたはネットワーク環境をご確認ください。</div>
-                    </div>
-                </div>`);
-            chatMsgs.scrollTop = chatMsgs.scrollHeight;
+            const indicator = document.getElementById('ai-thinking-indicator');
+            if (indicator) {
+                indicator.remove();
+                chatMsgs.innerHTML += `
+                    <div class="chat-msg other">
+                        <span class="chat-sender">🤖 AIアドバイザー</span>
+                        <div class="chat-bubble-container">
+                            <div class="chat-bubble" style="color: #ff9800;">応答に時間がかかっています。ネットワーク環境をご確認ください。</div>
+                        </div>
+                    </div>`;
+                chatMsgs.scrollTop = chatMsgs.scrollHeight;
+            }
         }, 55000);
     };
 
     socket.on('receive_message', (data) => {
-        const indicators = document.querySelectorAll('.ai-thinking-msg');
-        if (data.user && data.user.includes('AI')) {
-            indicators.forEach(el => el.remove());
+        const thinkingIndicator = document.getElementById('ai-thinking-indicator');
+        if (thinkingIndicator && data.user.includes('AI')) {
+            thinkingIndicator.remove();
             if (aiTimeoutTimer) clearTimeout(aiTimeoutTimer);
         }
 
