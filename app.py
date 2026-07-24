@@ -9,14 +9,12 @@ from flask_socketio import SocketIO, emit, join_room
 import openai
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# 【追加】環境変数(.env)を安全に読み込む処理
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
     pass
 
-# ※Tavilyのキーも将来的には .env に移動することを推奨します
 os.environ['TAVILY_API_KEY'] = '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'
 
 try:
@@ -47,13 +45,7 @@ def start_ollama_automatically():
     except Exception as e:
         pass
 
-# ==========================================
-# 【修正】環境変数からAPIキーを取得するように変更
-# ==========================================
-openai_api_key = os.environ.get('OPENAI_API_KEY')
-client = openai.OpenAI(api_key=openai_api_key)
 AI_MODEL = "gpt-4o-mini"
-# ==========================================
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -181,6 +173,13 @@ def on_delete_message(data):
 def async_ai_task(prompt, app_instance, room):
     with app_instance.app_context():
         try:
+            # 実行時に環境変数からAPIキーを安全に取得
+            openai_api_key = os.environ.get('OPENAI_API_KEY')
+            if not openai_api_key:
+                raise ValueError("OPENAI_API_KEYが設定されていません。RenderのEnvironment設定をご確認ください。")
+            
+            client = openai.OpenAI(api_key=openai_api_key)
+
             search_context = ""
             if tavily_available:
                 try:
@@ -240,7 +239,7 @@ def on_ask_ai(data):
     }, room=room)
     
     thread = threading.Thread(target=async_ai_task, args=(prompt, app, room))
-    thread.daemon = True
+    thread.daemon = Type = True
     thread.start()
 
 if __name__ == '__main__':

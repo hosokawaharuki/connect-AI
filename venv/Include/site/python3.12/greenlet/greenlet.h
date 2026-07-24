@@ -6,7 +6,17 @@
 #define Py_GREENLETOBJECT_H
 
 
-#include <Python.h>
+#if defined(__has_include)
+#  if __has_include(<Python.h>)
+#    include <Python.h>
+#  elif __has_include("../../../Python.h")
+#    include "../../../Python.h"
+#  else
+#    include <Python.h>
+#  endif
+#else
+#  include <Python.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {
