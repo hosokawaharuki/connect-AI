@@ -9,6 +9,14 @@ from flask_socketio import SocketIO, emit, join_room
 import openai
 from werkzeug.security import generate_password_hash, check_password_hash
 
+# 【追加】環境変数(.env)を安全に読み込む処理
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+# ※Tavilyのキーも将来的には .env に移動することを推奨します
 os.environ['TAVILY_API_KEY'] = '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'
 
 try:
@@ -39,17 +47,13 @@ def start_ollama_automatically():
     except Exception as e:
         pass
 
+# ==========================================
+# 【修正】環境変数からAPIキーを取得するように変更
+# ==========================================
 openai_api_key = os.environ.get('OPENAI_API_KEY')
-
-if openai_api_key:
-    client = openai.OpenAI(api_key=openai_api_key)
-    AI_MODEL = "gpt-4o-mini"
-else:
-    client = openai.OpenAI(
-        base_url="http://localhost:11434/v1",
-        api_key="ollama"
-    )
-    AI_MODEL = "qwen2.5:1.5b"
+client = openai.OpenAI(api_key=openai_api_key)
+AI_MODEL = "gpt-4o-mini"
+# ==========================================
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -197,15 +201,14 @@ def async_ai_task(prompt, app_instance, room):
                     {"role": "system", "content": "あなたは正確で簡潔なAIアシスタントです。質問に対して嘘をつかず、関係のない話題に脱線しないで答えてください。"},
                     {"role": "user", "content": full_prompt}
                 ],
-                max_tokens=150,
-                temperature=0.1,
+                max_tokens=250,
+                temperature=0.7,
                 timeout=25
             )
             answer_text = response.choices[0].message.content.strip()
         except Exception as e:
-            answer_text = f"⚠️ AI応答エラー (APIキーやローカルAI環境をご確認ください): {str(e)}"
+            answer_text = f"⚠️ AI応答エラー: {str(e)}"
         
-        # 修正: エラーで落ちないよう try-except で囲み、安全にDBへ保存
         try:
             system_user = User.query.first()
             uid = system_user.id if system_user else None

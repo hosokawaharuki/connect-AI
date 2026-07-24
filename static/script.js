@@ -35,7 +35,6 @@ function initWhiteboard() {
     const boardWidth = 8000;
     const boardHeight = 8000;
     
-    // 【修正】CSSによるサイズズレを防ぎ、キャンバスを実サイズと合わせる
     canvasContainer.style.width = boardWidth + 'px';
     canvasContainer.style.height = boardHeight + 'px';
     
@@ -263,7 +262,6 @@ function initWhiteboard() {
 
     const firstCanvas = layers[0].canvas;
 
-    // 【修正】描画座標計算を修正（workspace基準にしてパン位置とスケールを考慮）
     function getCanvasCoords(e) {
         const rect = workspace.getBoundingClientRect();
         return {
