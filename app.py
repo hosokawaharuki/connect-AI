@@ -45,8 +45,6 @@ def start_ollama_automatically():
     except Exception as e:
         pass
 
-AI_MODEL = "gpt-4o-mini"
-
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
@@ -173,13 +171,6 @@ def on_delete_message(data):
 def async_ai_task(prompt, app_instance, room):
     with app_instance.app_context():
         try:
-            # 実行時に環境変数からAPIキーを安全に取得
-            openai_api_key = os.environ.get('OPENAI_API_KEY')
-            if not openai_api_key:
-                raise ValueError("OPENAI_API_KEYが設定されていません。RenderのEnvironment設定をご確認ください。")
-            
-            client = openai.OpenAI(api_key=openai_api_key)
-
             search_context = ""
             if tavily_available:
                 try:
@@ -194,19 +185,49 @@ def async_ai_task(prompt, app_instance, room):
 
             full_prompt = f"質問: {prompt}\n\n参考情報:\n{search_context if search_context else 'なし'}\n\n指示: 上記の質問に対し、関係のない情報を混ぜず、簡潔かつ正確に日本語で答えてください。"
 
-            response = client.chat.completions.create(
-                model=AI_MODEL, 
-                messages=[
-                    {"role": "system", "content": "あなたは正確で簡潔なAIアシスタントです。質問に対して嘘をつかず、関係のない話題に脱線しないで答えてください。"},
-                    {"role": "user", "content": full_prompt}
-                ],
-                max_tokens=250,
-                temperature=0.7,
-                timeout=25
-            )
-            answer_text = response.choices[0].message.content.strip()
+            answer_text = ""
+            openai_api_key = os.environ.get('OPENAI_API_KEY')
+            
+            # 1. まずOpenAIでの応答を試みる
+            try:
+                if not openai_api_key:
+                    raise ValueError("APIキー未設定")
+                
+                client = openai.OpenAI(api_key=openai_api_key)
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini", 
+                    messages=[
+                        {"role": "system", "content": "あなたは正確で簡潔なAIアシスタントです。質問に対して嘘をつかず、関係のない話題に脱線しないで答えてください。"},
+                        {"role": "user", "content": full_prompt}
+                    ],
+                    max_tokens=250,
+                    temperature=0.7,
+                    timeout=25
+                )
+                answer_text = response.choices[0].message.content.strip()
+            except Exception as openai_err:
+                # 2. OpenAIでエラー（残高不足429や認証エラー）が発生した場合、ローカルのOllamaへ自動フォールバック
+                try:
+                    local_client = openai.OpenAI(
+                        base_url="http://localhost:11434/v1",
+                        api_key="ollama"
+                    )
+                    local_response = local_client.chat.completions.create(
+                        model="qwen2.5:1.5b", 
+                        messages=[
+                            {"role": "system", "content": "あなたは正確で簡潔なAIアシスタントです。質問に対して嘘をつかず、関係のない話題に脱線しないで答えてください。"},
+                            {"role": "user", "content": full_prompt}
+                        ],
+                        max_tokens=250,
+                        temperature=0.7,
+                        timeout=25
+                    )
+                    answer_text = local_response.choices[0].message.content.strip() + "\n(※OpenAI制限のためローカルAIで応答)"
+                except Exception as local_err:
+                    answer_text = f"⚠️ AI応答エラー (OpenAI残高不足 & ローカルAI接続失敗): {str(openai_err)}"
+
         except Exception as e:
-            answer_text = f"⚠️ AI応答エラー: {str(e)}"
+            answer_text = f"⚠️ AI処理エラー: {str(e)}"
         
         try:
             system_user = User.query.first()
@@ -239,7 +260,7 @@ def on_ask_ai(data):
     }, room=room)
     
     thread = threading.Thread(target=async_ai_task, args=(prompt, app, room))
-    thread.daemon = Type = True
+    thread.daemon = True
     thread.start()
 
 if __name__ == '__main__':
